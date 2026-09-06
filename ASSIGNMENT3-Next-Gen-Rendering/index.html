@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Assignment #3 - Next Gen Rendering (PBR)</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #000; font-family: 'Segoe UI', sans-serif; }
+    canvas { display: block; }
+    #loading {
+      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      background: #111; color: #fff; font-size: 1.4rem; z-index: 100;
+      transition: opacity 0.5s;
+    }
+    #loading.hidden { opacity: 0; pointer-events: none; }
+    #info {
+      position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+      color: #ccc; font-size: 0.85rem; text-align: center;
+      background: rgba(0,0,0,0.5); padding: 8px 16px; border-radius: 6px;
+      pointer-events: none; z-index: 10;
+    }
+  </style>
+</head>
+<body>
+  <div id="loading">Loading scene...</div>
+  <div id="info">Drag to orbit | Scroll to zoom | Right-drag to pan | GUI panel on right</div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.19/+esm';
+
+    // ── Renderer ──
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.2;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    document.body.appendChild(renderer.domElement);
+
+    // ── Scene ──
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1a1a2e);
+
+    // ── Camera ──
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 200);
+    camera.position.set(6, 4, 8);
+
+    // ── Controls (Mouse Interaction) ──
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 1, 0);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.minDistance = 3;
+    controls.maxDistance = 25;
+    controls.maxPolarAngle = Math.PI / 2 - 0.02;
+    controls.update();
+
+    // ── Environment Map (for PBR reflections) ──
+    const pmremGenerator = new THREE.PMREMGenerator(renderer);
+    pmremGenerator.compileEquirectangularShader();
+
+    // Create a simple gradient environment
+    const envScene = new THREE.Scene();
+    const envGeo = new THREE.SphereGeometry(50, 32, 32);
+    const envMat = new THREE.ShaderMaterial({
+      side: THREE.BackSide,
+      uniforms: {
+        topColor: { value: new THREE.Color(0x0a0a2e) },
+        bottomColor: { value: new THREE.Color(0x2d1b4e) },
+        offset: { value: 10 },
+        exponent: { value: 0.5 }
+      },
+      vertexShader: `
+        varying vec3 vWorldPosition;
+        void main() {
+          vec4 worldPos = modelMatrix * vec4(position, 1.0);
+          vWorldPosition = worldPos.xyz;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 topColor;
+        uniform vec3 bottomColor;
+        uniform float offset;
+        uniform float exponent;
+        varying vec3 vWorldPosition;
+        void main() {
+          float h = normalize(vWorldPosition + offset).y;
+          gl_FragColor = vec4(mix(bottomColor, topColor, max(pow(max(h, 0.0), exponent), 0.0)), 1.0);
+        }
+      `
+    });
+    envScene.add(new THREE.Mesh(envGeo, envMat));
+
+    // Add some colored lights to env scene for reflections
+    const envLight1 = new THREE.PointLight(0xff6b35, 3, 40);
+    envLight1.position.set(10, 10, 5);
+    envScene.add(envLight1);
+    const envLight2 = new THREE.PointLight(0x35b5ff, 3, 40);
+    envLight2.position.set(-10, 8, -5);
+    envScene.add(envLight2);
+    const envLight3 = new THREE.PointLight(0xffffff, 2, 40);
+    envLight3.position.set(0, 15, 0);
+    envScene.add(envLight3);
+
+    const envMap = pmremGenerator.fromScene(envScene, 0, 0.1, 100).texture;
+    scene.environment = envMap;
+
+    // ── Lights ──
+    const lightSettings = {
+      directional: { color: '#ffffff', intensity: 3, x: 5, y: 8, z: 5 },
+      ambient: { color: '#404060', intensity: 0.4 },
+      pointLight1: { color: '#ff6b35', intensity: 5, x: -4, y: 3, z: -2 },
+      pointLight2: { color: '#35b5ff', intensity: 5, x: 4, y: 3, z: 3 },
+    };
+
+    // Directional Light (Main)
+    const dirLight = new THREE.DirectionalLight(
+      lightSettings.directional.color,
+      lightSettings.directional.intensity
+    );
+    dirLight.position.set(
+      lightSettings.directional.x,
+      lightSettings.directional.y,
+      lightSettings.directional.z
+    );
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.width = 2048;
+    dirLight.shadow.mapSize.height = 2048;
+    dirLight.shadow.camera.near = 0.1;
+    dirLight.shadow.camera.far = 30;
+    dirLight.shadow.camera.left = -10;
+    dirLight.shadow.camera.right = 10;
+    dirLight.shadow.camera.top = 10;
+    dirLight.shadow.camera.bottom = -10;
+    dirLight.shadow.bias = -0.001;
+    scene.add(dirLight);
+
+    // Ambient Light (Fill)
+    const ambientLight = new THREE.AmbientLight(
+      lightSettings.ambient.color,
+      lightSettings.ambient.intensity
+    );
+    scene.add(ambientLight);
+
+    // Point Light 1 (Accent warm)
+    const pointLight1 = new THREE.PointLight(
+      lightSettings.pointLight1.color,
+      lightSettings.pointLight1.intensity
+    );
+    pointLight1.position.set(
+      lightSettings.pointLight1.x,
+      lightSettings.pointLight1.y,
+      lightSettings.pointLight1.z
+    );
+    pointLight1.castShadow = true;
+    pointLight1.shadow.mapSize.width = 1024;
+    pointLight1.shadow.mapSize.height = 1024;
+    scene.add(pointLight1);
+
+    // Point Light 2 (Accent cool)
+    const pointLight2 = new THREE.PointLight(
+      lightSettings.pointLight2.color,
+      lightSettings.pointLight2.intensity
+    );
+    pointLight2.position.set(
+      lightSettings.pointLight2.x,
+      lightSettings.pointLight2.y,
+      lightSettings.pointLight2.z
+    );
+    pointLight2.castShadow = true;
+    pointLight2.shadow.mapSize.width = 1024;
+    pointLight2.shadow.mapSize.height = 1024;
+    scene.add(pointLight2);
+
+    // ── Helper spheres for point lights (small glowing orbs) ──
+    const lightHelperGeo = new THREE.SphereGeometry(0.12, 16, 16);
+    const lightHelperMat1 = new THREE.MeshBasicMaterial({ color: 0xff6b35 });
+    const lightHelperMat2 = new THREE.MeshBasicMaterial({ color: 0x35b5ff });
+    const lightHelper1 = new THREE.Mesh(lightHelperGeo, lightHelperMat1);
+    const lightHelper2 = new THREE.Mesh(lightHelperGeo, lightHelperMat2);
+    scene.add(lightHelper1);
+    scene.add(lightHelper2);
+
+    // ══════════════════════════════════════════
+    // ── GROUND (Reflective Showroom Floor) ──
+    // ══════════════════════════════════════════
+    const groundSettings = { color: '#1a1a2e', metalness: 0.9, roughness: 0.05 };
+    const groundMat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(groundSettings.color),
+      metalness: groundSettings.metalness,
+      roughness: groundSettings.roughness,
+      envMap: envMap,
+      envMapIntensity: 1.5,
+    });
+    const groundGeo = new THREE.PlaneGeometry(30, 30);
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = 0;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    // Grid lines on ground
+    const gridHelper = new THREE.GridHelper(30, 30, 0x333355, 0x222244);
+    gridHelper.position.y = 0.005;
+    scene.add(gridHelper);
+
+    // ══════════════════════════════════════════
+    // ── STRUCTURES ──
+    // ══════════════════════════════════════════
+    const structures = [];
+
+    // --- Back Wall (Glass-like, low metallic, very smooth) ---
+    const wallMat = new THREE.MeshStandardMaterial({
+      color: 0x88aacc,
+      metalness: 0.0,
+      roughness: 0.0,
+      transparent: true,
+      opacity: 0.25,
+      envMap: envMap,
+      envMapIntensity: 2.0,
+    });
+    const wallGeo = new THREE.BoxGeometry(16, 5, 0.15);
+    const wall = new THREE.Mesh(wallGeo, wallMat);
+    wall.position.set(0, 2.5, -7);
+    wall.receiveShadow = true;
+    scene.add(wall);
+    structures.push({ mesh: wall, label: 'Glass Wall', color: '#88aacc', metalness: 0.0, roughness: 0.0 });
+
+    // --- Side Wall Left ---
+    const sideWallMat = new THREE.MeshStandardMaterial({
+      color: 0x667788,
+      metalness: 0.3,
+      roughness: 0.4,
+      envMap: envMap,
+      envMapIntensity: 1.0,
+    });
+    const sideWallGeo = new THREE.BoxGeometry(0.15, 5, 14);
+    const sideWallL = new THREE.Mesh(sideWallGeo, sideWallMat);
+    sideWallL.position.set(-8, 2.5, 0);
+    sideWallL.receiveShadow = true;
+    sideWallL.castShadow = true;
+    scene.add(sideWallL);
+
+    const sideWallR = new THREE.Mesh(sideWallGeo, sideWallMat.clone());
+    sideWallR.position.set(8, 2.5, 0);
+    sideWallR.receiveShadow = true;
+    sideWallR.castShadow = true;
+    scene.add(sideWallR);
+
+    // --- Pillars (High metallic - Chrome) ---
+    const pillarMat = new THREE.MeshStandardMaterial({
+      color: 0xcccccc,
+      metalness: 1.0,
+      roughness: 0.1,
+      envMap: envMap,
+      envMapIntensity: 2.0,
+    });
+    const pillarGeo = new THREE.CylinderGeometry(0.2, 0.2, 5, 32);
+    const pillarPositions = [
+      [-6, 2.5, -6.5], [6, 2.5, -6.5],
+      [-6, 2.5, 5], [6, 2.5, 5],
+    ];
+    pillarPositions.forEach(pos => {
+      const pillar = new THREE.Mesh(pillarGeo, pillarMat.clone());
+      pillar.position.set(...pos);
+      pillar.castShadow = true;
+      pillar.receiveShadow = true;
+      scene.add(pillar);
+      structures.push({ mesh: pillar, label: 'Chrome Pillar', color: '#cccccc', metalness: 1.0, roughness: 0.1 });
+    });
+
+    // --- Display Pedestal (Dark metal) ---
+    const pedestalMat = new THREE.MeshStandardMaterial({
+      color: 0x222222,
+      metalness: 0.8,
+      roughness: 0.3,
+      envMap: envMap,
+      envMapIntensity: 1.5,
+    });
+    const pedestalGeo = new THREE.CylinderGeometry(2.2, 2.4, 0.15, 64);
+    const pedestal = new THREE.Mesh(pedestalGeo, pedestalMat);
+    pedestal.position.y = 0.075;
+    pedestal.receiveShadow = true;
+    scene.add(pedestal);
+
+    // --- Concrete Block (Rough, non-metallic) ---
+    const concreteMat = new THREE.MeshStandardMaterial({
+      color: 0x888888,
+      metalness: 0.0,
+      roughness: 0.85,
+      envMap: envMap,
+      envMapIntensity: 0.3,
+    });
+    const concreteGeo = new THREE.BoxGeometry(1.5, 1.2, 1.5);
+    const concreteBlock = new THREE.Mesh(concreteGeo, concreteMat);
+    concreteBlock.position.set(-5, 0.6, 3);
+    concreteBlock.castShadow = true;
+    concreteBlock.receiveShadow = true;
+    scene.add(concreteBlock);
+    structures.push({ mesh: concreteBlock, label: 'Concrete Block', color: '#888888', metalness: 0.0, roughness: 0.85 });
+
+    // --- Gold Accent Block (High metallic, colored) ---
+    const goldMat = new THREE.MeshStandardMaterial({
+      color: 0xffd700,
+      metalness: 1.0,
+      roughness: 0.2,
+      envMap: envMap,
+      envMapIntensity: 2.5,
+    });
+    const goldGeo = new THREE.BoxGeometry(0.8, 0.8, 0.8);
+    const goldBlock = new THREE.Mesh(goldGeo, goldMat);
+    goldBlock.position.set(5.5, 0.4, -3);
+    goldBlock.rotation.y = Math.PI / 4;
+    goldBlock.castShadow = true;
+    goldBlock.receiveShadow = true;
+    scene.add(goldBlock);
+    structures.push({ mesh: goldBlock, label: 'Gold Block', color: '#ffd700', metalness: 1.0, roughness: 0.2 });
+
+    // --- Rusty Block (Medium metallic, high roughness) ---
+    const rustyMat = new THREE.MeshStandardMaterial({
+      color: 0x8B4513,
+      metalness: 0.5,
+      roughness: 0.75,
+      envMap: envMap,
+      envMapIntensity: 0.5,
+    });
+    const rustyGeo = new THREE.BoxGeometry(1.2, 1.0, 1.2);
+    const rustyBlock = new THREE.Mesh(rustyGeo, rustyMat);
+    rustyBlock.position.set(5, 0.5, 4);
+    rustyBlock.rotation.y = 0.3;
+    rustyBlock.castShadow = true;
+    rustyBlock.receiveShadow = true;
+    scene.add(rustyBlock);
+    structures.push({ mesh: rustyBlock, label: 'Rusty Block', color: '#8B4513', metalness: 0.5, roughness: 0.75 });
+
+    // ══════════════════════════════════════════
+    // ── LOAD GLB MODEL (Main Character) ──
+    // ══════════════════════════════════════════
+    const loader = new GLTFLoader();
+    let carModel = null;
+
+    loader.load('toyota_ae86.glb', (gltf) => {
+      carModel = gltf.scene;
+
+      // Auto-center & scale model
+      const box = new THREE.Box3().setFromObject(carModel);
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z);
+      const scale = 3.5 / maxDim;
+      carModel.scale.setScalar(scale);
+      carModel.position.sub(center.multiplyScalar(scale));
+      carModel.position.y = 0.16;
+
+      // Ensure all meshes cast/receive shadows, have envMap, and collect unique materials
+      const uniqueMaterials = new Set();
+      carModel.traverse((child) => {
+        if (child.isMesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+          if (child.material) {
+            child.material.envMap = envMap;
+            child.material.envMapIntensity = 1.5;
+            child.material.needsUpdate = true;
+            uniqueMaterials.add(child.material);
+          }
+        }
+      });
+
+      scene.add(carModel);
+      document.getElementById('loading').classList.add('hidden');
+
+      // ══════════════════════════════════════════
+      // ── GUI: Main Character (PBR) Attributes ──
+      // ══════════════════════════════════════════
+      const carPBR = {
+        baseColor: '#ffffff',
+        metalness: 1.0,
+        roughness: 0.0,
+        envIntensity: 1.5,
+      };
+
+      const applyCarPBR = () => {
+        uniqueMaterials.forEach((mat) => {
+          mat.color.set(carPBR.baseColor);
+          mat.metalness = carPBR.metalness;
+          mat.roughness = carPBR.roughness;
+          mat.envMapIntensity = carPBR.envIntensity;
+          mat.needsUpdate = true;
+        });
+      };
+
+      const carFolder = gui.addFolder('Main Character (PBR)');
+      carFolder.addColor(carPBR, 'baseColor').name('Base Color').onChange(applyCarPBR);
+      carFolder.add(carPBR, 'metalness', 0, 1, 0.01).name('Metallic').onChange(applyCarPBR);
+      carFolder.add(carPBR, 'roughness', 0, 1, 0.01).name('Roughness').onChange(applyCarPBR);
+      carFolder.add(carPBR, 'envIntensity', 0, 3, 0.05).name('Env Reflection').onChange(applyCarPBR);
+      carFolder.open();
+      applyCarPBR();
+
+      console.log('Model loaded. PBR Attributes:', carPBR);
+    },
+    (progress) => {
+      const pct = progress.loaded / (progress.total || 1) * 100;
+      document.getElementById('loading').textContent = `Loading model... ${Math.round(pct)}%`;
+    },
+    (error) => {
+      console.error('Error loading model:', error);
+      document.getElementById('loading').textContent = 'Error loading model. Make sure toyota_ae86.glb is in the same directory.';
+    });
+
+    // ══════════════════════════════════════════
+    // ── GUI (lil-gui) ──
+    // ══════════════════════════════════════════
+    const gui = new GUI({ title: 'Light Controls', width: 300 });
+
+    // Directional Light folder
+    const dirFolder = gui.addFolder('Directional Light');
+    dirFolder.addColor(lightSettings.directional, 'color').name('Color').onChange(v => dirLight.color.set(v));
+    dirFolder.add(lightSettings.directional, 'intensity', 0, 10, 0.1).name('Intensity').onChange(v => dirLight.intensity = v);
+    dirFolder.add(lightSettings.directional, 'x', -15, 15, 0.1).name('Position X').onChange(v => dirLight.position.x = v);
+    dirFolder.add(lightSettings.directional, 'y', 0, 15, 0.1).name('Position Y').onChange(v => dirLight.position.y = v);
+    dirFolder.add(lightSettings.directional, 'z', -15, 15, 0.1).name('Position Z').onChange(v => dirLight.position.z = v);
+
+    // Ambient Light folder
+    const ambFolder = gui.addFolder('Ambient Light');
+    ambFolder.addColor(lightSettings.ambient, 'color').name('Color').onChange(v => ambientLight.color.set(v));
+    ambFolder.add(lightSettings.ambient, 'intensity', 0, 3, 0.05).name('Intensity').onChange(v => ambientLight.intensity = v);
+
+    // Point Light 1 folder
+    const pl1Folder = gui.addFolder('Point Light 1 (Warm)');
+    pl1Folder.addColor(lightSettings.pointLight1, 'color').name('Color').onChange(v => { pointLight1.color.set(v); lightHelperMat1.color.set(v); });
+    pl1Folder.add(lightSettings.pointLight1, 'intensity', 0, 15, 0.1).name('Intensity').onChange(v => pointLight1.intensity = v);
+    pl1Folder.add(lightSettings.pointLight1, 'x', -15, 15, 0.1).name('Position X').onChange(v => pointLight1.position.x = v);
+    pl1Folder.add(lightSettings.pointLight1, 'y', 0, 10, 0.1).name('Position Y').onChange(v => pointLight1.position.y = v);
+    pl1Folder.add(lightSettings.pointLight1, 'z', -15, 15, 0.1).name('Position Z').onChange(v => pointLight1.position.z = v);
+
+    // Point Light 2 folder
+    const pl2Folder = gui.addFolder('Point Light 2 (Cool)');
+    pl2Folder.addColor(lightSettings.pointLight2, 'color').name('Color').onChange(v => { pointLight2.color.set(v); lightHelperMat2.color.set(v); });
+    pl2Folder.add(lightSettings.pointLight2, 'intensity', 0, 15, 0.1).name('Intensity').onChange(v => pointLight2.intensity = v);
+    pl2Folder.add(lightSettings.pointLight2, 'x', -15, 15, 0.1).name('Position X').onChange(v => pointLight2.position.x = v);
+    pl2Folder.add(lightSettings.pointLight2, 'y', 0, 10, 0.1).name('Position Y').onChange(v => pointLight2.position.y = v);
+    pl2Folder.add(lightSettings.pointLight2, 'z', -15, 15, 0.1).name('Position Z').onChange(v => pointLight2.position.z = v);
+
+    // Ground Material folder
+    const groundFolder = gui.addFolder('Ground (PBR)');
+    groundFolder.addColor(groundSettings, 'color').name('Base Color').onChange(v => groundMat.color.set(v));
+    groundFolder.add(groundSettings, 'metalness', 0, 1, 0.01).name('Metallic').onChange(v => groundMat.metalness = v);
+    groundFolder.add(groundSettings, 'roughness', 0, 1, 0.01).name('Roughness').onChange(v => groundMat.roughness = v);
+
+    // Tone mapping
+    const toneSettings = { exposure: 1.2 };
+    const renderFolder = gui.addFolder('Rendering');
+    renderFolder.add(toneSettings, 'exposure', 0.2, 3, 0.05).name('Exposure').onChange(v => renderer.toneMappingExposure = v);
+
+    gui.close();
+
+    // ══════════════════════════════════════════
+    // ── ANIMATION LOOP ──
+    // ══════════════════════════════════════════
+    const clock = new THREE.Clock();
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const elapsed = clock.getElapsedTime();
+
+      // Update light helper positions
+      lightHelper1.position.copy(pointLight1.position);
+      lightHelper2.position.copy(pointLight2.position);
+
+      // Subtle car rotation
+      if (carModel) {
+        carModel.rotation.y = Math.sin(elapsed * 0.3) * 0.05;
+      }
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    // ── Resize Handler ──
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    console.log('=== Next Gen Rendering - PBR Demo ===');
+    console.log('PBR Properties in this scene:');
+    console.log('  - Base Color: Defined per material');
+    console.log('  - Metallic: 0 (dielectric) to 1 (conductor)');
+    console.log('  - Roughness: 0 (mirror-smooth) to 1 (fully diffuse)');
+    console.log('Use GUI panel (top-right) to adjust lights and materials in real-time.');
+  </script>
+</body>
+</html>
