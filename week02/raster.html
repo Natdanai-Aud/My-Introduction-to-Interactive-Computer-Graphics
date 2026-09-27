@@ -1,0 +1,125 @@
+<html>
+
+<head>
+    <title>Raster Graphics</title>
+</head>
+
+<body>
+
+    <canvas id="canvas" width="200" height="200"
+        style="width:500px; height:500px; border:1px solid #000; image-rendering: pixelated;">
+    </canvas>
+
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const imageData = ctx.createImageData(canvas.width, canvas.height);
+        const pixels = imageData.data; // Array of color [R,G,B,A, R,G,B,A, ...]
+
+        function putPixel(x, y, r, g, b, a = 255) {
+            const idx = (y * canvas.width + x) * 4; // หา index แรกของ pixel (x,y)
+            pixels[idx] = r;
+            pixels[idx + 1] = g;
+            pixels[idx + 2] = b;
+            pixels[idx + 3] = a;
+        }
+
+        function drawLine(x1, y1, x2, y2, r, g, b, a = 255) {
+            const dx = Math.abs(x2 - x1);
+            const dy = Math.abs(y2 - y1);
+
+            if (dx > dy) {
+                const m = (y2 - y1) / (x2 - x1);
+                const c = y1 - m * x1;
+                for (let x = Math.min(x1, x2); x <= Math.max(x1, x2); x++) {
+                    const y = Math.round(m * x + c);
+                    putPixel(x, y, r, g, b, a);
+                }
+            } else {
+                const m = (x2 - x1) / (y2 - y1);
+                const c = x1 - m * y1;
+                for (let y = Math.min(y1, y2); y <= Math.max(y1, y2); y++) {
+                    const x = Math.round(m * y + c);
+                    putPixel(x, y, r, g, b, a);
+                }
+            }
+        }
+
+
+        function drawRect(x1, y1, x2, y2, r, g, b, a = 255) {
+            drawLine(x1, y1, x2, y1, r, g, b, a); // top
+            drawLine(x1, y2, x1, y2, r, g, b, a); // 
+            drawLine(x1, y2, x1, y2, r, g, b, a); // 
+            drawLine(x1, y2, x1, y2, r, g, b, a); // 
+        }
+
+        function drawEllipse(cx, cy, rx, ry, r, g, b, a = 255) {
+            for (let y = -ry; y <= ry; y++) {
+                for (let x = -rx; x <= rx; x++) {
+                    if ((x * x) / (rx * rx) + (y * y) / (ry * ry) <= 1) {
+                        putPixel(cx + x, cy + y, r, g, b, a);
+                    }
+                }
+            }
+        }
+
+        function drawSprite(sprite, x, y, r, g, b, a = 255) {
+            for (let j = 0; j < sprite.length; j++) {
+                for (let i = 0; i < sprite[j].length; i++) {
+                    if (sprite[j][i] === 1) {
+                        putPixel(x + i, y + j, r, g, b, a);
+                    }
+                }
+            }
+        }
+
+        const spaceInvaderSprite =
+            [
+                [0, 0, 1, 0, 0, 1, 0, 0],
+                [0, 0, 0, 1, 1, 0, 0, 0],
+                [0, 0, 1, 1, 1, 1, 0, 0],
+                [0, 1, 1, 1, 1, 1, 1, 0],
+                [1, 1, 0, 1, 1, 0, 1, 1],
+                [1, 1, 1, 1, 1, 1, 1, 1],
+                [1, 0, 1, 0, 0, 1, 0, 1],
+                [0, 1, 0, 1, 1, 0, 1, 0],
+            ];
+
+        const smileInvaderSprite =
+            [
+                [0, 0, 0, 0, 0, 0, 0, 0],
+                [0, 1, 1, 0, 0, 1, 1, 0],
+                [0, 1, 1, 0, 0, 1, 1, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0],
+                [1, 0, 0, 0, 0, 0, 0, 1],
+                [0, 1, 0, 0, 0, 0, 1, 0],
+                [0, 0, 1, 1, 1, 1, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0],
+            ];
+
+        //  drawLine(10, 10, 12, 190, 255, 0, 0); // เส้น
+        // drawRect(50, 70, 150, 50, 0, 255, 0, 255); // สี่เหลี่ยม
+        //  putPixel(0, 0, 255, 0, 0); // pixel (0,0) เป็นสีแดง จุด
+        //  drawEllipse(50, 50, 50, 50, 0, 255, 0); //  วงกลม
+        for (let alien = 0; alien < 10; alien++) {
+            for (let row = 0; row < 3; row++) {
+                drawSprite(spaceInvaderSprite, 20 + alien * 20, 100 + row * 20, 255, 0, 255);
+            }
+        }
+
+        for (let smile = 0; smile < 10; smile++) {
+            for (let row = 0; row < 3; row++) {
+                drawSprite(smileInvaderSprite, 20 + smile * 20, 20 + row * 20, 255, 0, 255);
+            }
+        }
+        //drawSprite(smileInvaderSprite, 80, 30, 255, 0, 255);
+
+        ctx.putImageData(imageData, 0, 0);
+    </script>
+
+
+
+</body>
+
+</html>

@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>My First Three.js Cube</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+        }
+
+        /* ลบ margin เริ่มต้นของ body และซ่อน scrollbar */
+    </style>
+</head>
+
+<body>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // โค้ด Three.js ของเราจะมาที่นี่
+        const renderer = new THREE.WebGLRenderer();
+        renderer.setSize(window.innerWidth, window.innerHeight); // กำหนดขนาดของ Renderer ให้เท่ากับขนาดหน้าจอเบราว์เซอร์
+        document.body.appendChild(renderer.domElement); // เพิ่ม Canvas ของ Renderer เข้าไปใน body ของ HTML
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 5;
+
+        const cubeGeometry = new THREE.BoxGeometry(1, 1, 1);
+        const cubeMesh = new THREE.Mesh(cubeGeometry);
+        scene.add(cubeMesh);
+
+        const COUNT = 1000;
+        const geo = new THREE.BoxGeometry(.4, .4, .4);
+        const mat = new THREE.MeshNormalMaterial();
+        const mesh = new THREE.InstancedMesh(geo, mat, COUNT); // ★ instanced
+        scene.add(mesh);
+        const dummy = new THREE.Object3D(); // ช่วยตั้ง matrix
+        for (let i = 0; i < COUNT; i++) {
+            dummy.position.set(
+                (Math.random() - .5) * 20,
+                (Math.random() - .5) * 20,
+                (Math.random() - .5) * 20
+            );
+            dummy.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, 0);
+            dummy.updateMatrix();
+            mesh.setMatrixAt(i, dummy.matrix);
+        }
+        function animate(t) {
+            mesh.rotation.y = t * 0.0003; // หมุนก้อน instanced ทั้งกลุ่ม
+            renderer.render(scene, camera);
+            requestAnimationFrame(animate);
+        }
+        animate();
+
+        /*function animate() {
+            requestAnimationFrame(animate);
+            cubeMesh.rotation.x += 0.01; // หมุนลูกบาศก์รอบแกน x 45 องศา
+            cubeMesh.rotation.y += 0.01; // หมุนลูกบาศก์รอบแกน y 45 องศา
+
+            renderer.render(scene, camera);
+        }
+
+        animate();*/
+
+        renderer.render(scene, camera);
+    </script>
+</body>
+
+</html>

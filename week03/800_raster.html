@@ -1,0 +1,215 @@
+<html>
+
+<head>
+    <title>Raster Graphics</title>
+</head>
+
+<body>
+
+    <canvas id="canvas" width="200" height="200"
+        style="width:500px; height:500px; border:1px solid #000; image-rendering: pixelated;">
+    </canvas>
+
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const imageData = ctx.createImageData(canvas.width, canvas.height);
+        const pixels = imageData.data; // Array of color [R,G,B,A, R,G,B,A, ...]
+
+        function putPixel(x, y, r, g, b, a = 255) {
+            const idx = (y * canvas.width + x) * 4; // หา index แรกของ pixel (x,y)
+            pixels[idx] = r;
+            pixels[idx + 1] = g;
+            pixels[idx + 2] = b;
+            pixels[idx + 3] = a;
+        }
+
+        function drawLine(x1, y1, x2, y2, r, g, b, a = 255) {
+            const dx = Math.abs(x2 - x1);
+            const dy = Math.abs(y2 - y1);
+
+            if (dx > dy) {
+                const m = (y2 - y1) / (x2 - x1);
+                const c = y1 - m * x1;
+                for (let x = Math.min(x1, x2); x <= Math.max(x1, x2); x++) {
+                    const y = Math.round(m * x + c);
+                    putPixel(x, y, r, g, b, a);
+                }
+            } else {
+                const m = (x2 - x1) / (y2 - y1);
+                const c = x1 - m * y1;
+                for (let y = Math.min(y1, y2); y <= Math.max(y1, y2); y++) {
+                    const x = Math.round(m * y + c);
+                    putPixel(x, y, r, g, b, a);
+                }
+            }
+        }
+
+        function drawRect(x1, y1, x2, y2, r, g, b, a = 255) {
+            drawLine(x1, y1, x2, y1, r, g, b, a); // Top edge
+            drawLine(x2, y1, x2, y2, r, g, b, a); // Right edge
+            drawLine(x2, y2, x1, y2, r, g, b, a); // Bottom edge
+            drawLine(x1, y2, x1, y1, r, g, b, a); // Left edge
+        }
+
+        function drawRectFilled(x1, y1, x2, y2, r, g, b, a = 255) {
+            for (let y = y1; y <= y2; y++) {
+                for (let x = x1; x <= x2; x++) {
+                    putPixel(x, y, r, g, b, a);
+                }
+            }
+        }
+
+        function drawRectGradient(x1, y1, x2, y2, r1, g1, b1, r2, g2, b2) {
+            for (let y = y1; y <= y2; y++) {
+                const t = (y - y1) / (y2 - y1);
+                const r = Math.round(r1 * (1 - t) + r2 * t);
+                const g = Math.round(g1 * (1 - t) + g2 * t);
+                const b = Math.round(b1 * (1 - t) + b2 * t);
+                for (let x = x1; x <= x2; x++) {
+                    putPixel(x, y, r, g, b);
+                }
+            }
+        }
+
+        function drawEllipse(cx, cy, rx, ry, r, g, b, a = 255) {
+            for (let y = -ry; y <= ry; y++) {
+                for (let x = -rx; x <= rx; x++) {
+                    if ((x * x) / (rx * rx) + (y * y) / (ry * ry) <= 1) {
+                        putPixel(cx + x, cy + y, r, g, b, a);
+                    }
+                }
+            }
+        }
+
+        function drawSprite(sprite, x, y, r, g, b, a = 255) {
+            for (let j = 0; j < sprite.length; j++) {
+                for (let i = 0; i < sprite[j].length; i++) {
+                    if (sprite[j][i] === 1) {
+                        putPixel(x + i, y + j, r, g, b, a);
+                    }
+                }
+            }
+        }
+
+        function toScaledMousePos(posX, posY) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            return {
+                x: Math.floor((posX - rect.left) * scaleX),
+                y: Math.floor((posY - rect.top) * scaleY)
+            };
+        }
+
+        const spaceInvaderSprite =
+            [
+                [0, 0, 1, 0, 0, 1, 0, 0],
+                [0, 0, 0, 1, 1, 0, 0, 0],
+                [0, 0, 1, 1, 1, 1, 0, 0],
+                [0, 1, 1, 1, 1, 1, 1, 0],
+                [1, 1, 0, 1, 1, 0, 1, 1],
+                [1, 1, 1, 1, 1, 1, 1, 1],
+                [1, 0, 1, 0, 0, 1, 0, 1],
+                [0, 1, 0, 1, 1, 0, 1, 0],
+            ];
+        const smileSprite =
+            [
+                [0, 0, 1, 1, 1, 1, 0, 0],
+                [0, 1, 0, 0, 0, 0, 1, 0],
+                [1, 0, 1, 0, 0, 1, 0, 1],
+                [1, 0, 0, 0, 0, 0, 0, 1],
+                [1, 0, 1, 0, 0, 1, 0, 1],
+                [1, 0, 0, 1, 1, 0, 0, 1],
+                [0, 1, 0, 0, 0, 0, 1, 0],
+                [0, 0, 1, 1, 1, 1, 0, 0],
+            ];
+
+        let isDragging = false;
+        let previousX = 0;
+        let previousY = 0;
+        let r = 0, g = 0, b = 0;
+
+        canvas.addEventListener('click', (event) => {
+            console.log('Clicked at:', event.offsetX, event.offsetY);
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = Math.floor((event.clientX - rect.left) * scaleX);
+            const y = Math.floor((event.clientY - rect.top) * scaleY);
+            putPixel(x, y, 255, 0, 0); // Draw a red pixel where clicked
+            ctx.putImageData(imageData, 0, 0);
+        });
+
+        canvas.addEventListener('mousedown', (event) => {
+            isDragging = true;
+            console.log('Mouse down at:', event.offsetX, event.offsetY);
+        });
+
+        canvas.addEventListener('mouseup', (event) => {
+            isDragging = false;
+            console.log('Mouse up at:', event.offsetX, event.offsetY);
+
+
+        });
+
+        canvas.addEventListener('mousemove', (event) => {
+            const { x, y } = toScaledMousePos(event.clientX, event.clientY);
+            if (isDragging) {
+                //    console.log('Mouse move at:', event.offsetX, event.offsetY);
+                drawLine(previousX, previousY, x, y, r, g, b);
+
+                putPixel(x, y, 0, 255, 0); // Draw a green pixel where clicked
+                ctx.putImageData(imageData, 0, 0);
+
+            }
+            previousX = x;
+            previousY = y;
+        });
+
+        window.addEventListener('keydown', function (event) {
+            console.log('Key down:', event.key);
+            if (event.key === '1') {
+                r = 255; g = 0; b = 0;
+            }
+            else if (event.key === '2') {
+                r = 0; g = 255; b = 0;
+            }
+            else if (event.key === '3') {
+                r = 0; g = 0; b = 255;
+            }
+            else if (event.key === 'e') {
+                r = 255; g = 255; b = 255;
+
+            }
+
+        });
+
+
+        drawLine(10, 10, 12, 190, 255, 0, 0); // Draw a red line
+        drawRect(50, 70, 150, 120, 0, 255, 0); // Draw a green rectangle
+        drawRectFilled(60, 80, 140, 110, 0, 0, 255); // Draw a filled blue rectangle
+        drawRectGradient(160, 70, 190, 120, 255, 0, 0, 0, 255, 0); // Draw a gradient rectangle
+        drawEllipse(100, 150, 30, 60, 255, 255, 0); // Draw a yellow ellipse
+        drawSprite(spaceInvaderSprite, 20, 30, 0, 255, 255); // Draw a cyan space invader sprite
+        drawSprite(smileSprite, 80, 30, 255, 0, 255); // Draw a magenta smile sprite
+
+        for (let alien = 0; alien < 3; alien++) {
+            for (let row = 0; row < 3; row++) {
+                drawSprite(spaceInvaderSprite, 20 + alien * 20, 100 + row * 20, 0, 255, 128); // Draw multiple space invaders in rows
+            }
+        }
+
+
+
+        ctx.putImageData(imageData, 0, 0);
+
+
+
+
+
+    </script>
+</body>
+
+</html>

@@ -68,6 +68,46 @@
 
         scene.background = new THREE.Color(0xffffff);
 
+        // Projector screen content - one action per language
+        const screenTextures = { th: null, en: null };
+        let screenMesh = null;
+
+        function loadScreenTexture(path, onLoad) {
+            new THREE.TextureLoader().load(path, (texture) => {
+                texture.encoding = THREE.sRGBEncoding;
+                texture.flipY = false; // GLB UVs already use glTF's top-left origin
+                texture.generateMipmaps = false; // 1920x1080 is not power-of-two
+                texture.minFilter = THREE.LinearFilter;
+                texture.wrapS = THREE.ClampToEdgeWrapping;
+                texture.wrapT = THREE.ClampToEdgeWrapping;
+                texture.needsUpdate = true;
+                onLoad(texture);
+            });
+        }
+
+        function actionThai() {
+            if (!screenMesh || !screenTextures.th) return;
+            screenMesh.material.map = screenTextures.th;
+            screenMesh.material.emissiveMap = screenTextures.th;
+            screenMesh.material.emissive = new THREE.Color(0xffffff);
+            screenMesh.material.emissiveIntensity = 0.4;
+            screenMesh.material.needsUpdate = true;
+            console.log('Screen: Thai');
+        }
+
+        function actionEnglish() {
+            if (!screenMesh || !screenTextures.en) return;
+            screenMesh.material.map = screenTextures.en;
+            screenMesh.material.emissiveMap = screenTextures.en;
+            screenMesh.material.emissive = new THREE.Color(0xffffff);
+            screenMesh.material.emissiveIntensity = 0.4;
+            screenMesh.material.needsUpdate = true;
+            console.log('Screen: English');
+        }
+
+        loadScreenTexture('screen/TH.png', (t) => { screenTextures.th = t; actionThai(); });
+        loadScreenTexture('screen/EN.png', (t) => { screenTextures.en = t; });
+
         // Load Room.glb model
         const loader = new THREE.GLTFLoader();
         loader.load('Model/Room.glb', (gltf) => {
@@ -89,6 +129,14 @@
                 }
             });
 
+            screenMesh = roomModel.getObjectByName('Screen_Surface');
+            if (screenMesh) {
+                // default language; also applies the texture if it finished loading after the GLB
+                actionThai();
+            } else {
+                console.error('Screen_Surface not found in Model/Room.glb');
+            }
+
             scene.add(roomModel);
             console.log('Model loaded: Model/Room.glb');
         }, undefined, (error) => {
@@ -102,7 +150,9 @@
         animate(0);
 
         window.addEventListener('keydown', (event) => {
-
+            const key = event.key.toLowerCase();
+            if (key === 't') actionThai();
+            if (key === 'e') actionEnglish();
         });
 
     </script>
