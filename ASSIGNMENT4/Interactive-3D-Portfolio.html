@@ -8,10 +8,32 @@
             margin: 0;
             overflow: hidden;
         }
+
+        #legend {
+            position: fixed;
+            left: 12px;
+            bottom: 12px;
+            padding: 10px 14px;
+            font: 12px/1.7 monospace;
+            color: #fff;
+            background: rgba(0, 0, 0, 0.55);
+            border-radius: 6px;
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        #legend b {
+            color: #ffd479;
+        }
     </style>
 </head>
 
 <body>
+    <div id="legend">
+        คลิก<b>ผิวจอ</b> = กาง / ยุบ &nbsp;·&nbsp; คลิก<b>กล่อง</b> = โฟกัสกล้อง<br>
+        คลิกพื้นหลัง = กลับกลางฉาก &nbsp;·&nbsp; <b>T</b> ไทย &nbsp; <b>E</b> English &nbsp; (ลากเมาส์ซ้ายเพื่อหมุนมุมมอง)
+    </div>
+
     <!-- core three.js -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
@@ -72,6 +94,101 @@
         const screenTextures = { th: null, en: null };
         let screenMesh = null;
 
+        // Projector screen open/close animation - 4 clips from model.blend
+        const SCREEN_CLIPS = {
+            closed: 'ACT_01_Screen_Closed',
+            open: 'ACT_02_Screen_Open',
+            opening: 'ACT_03_Screen_Opening',
+            closing: 'ACT_04_Screen_Closing'
+        };
+        const clock = new THREE.Clock();
+        let mixer = null;
+        const screenActions = {};
+        let roomModel = null;
+
+        // picking: ชิ้นจอ (ใต้ Screen_Control) = กดกาง/ยุบ, ชิ้นกล่อง = กดโฟกัสกล้อง
+        const screenMeshes = [];
+        const housingMeshes = [];
+        let pickTargets = [];
+        const raycaster = new THREE.Raycaster();
+        const pointerNDC = new THREE.Vector2();
+        const CLICK_MAX_DRAG = 5; // px ขยับน้อยกว่านี้ถือว่าเป็นการคลิก ไม่ใช่การลากหมุนมุมมอง
+        let pointerDownX = 0, pointerDownY = 0;
+
+        // เลื่อนจุดหมุนรอบไปหา object ที่คลิก แล้วหยุด
+        // ถ้ากำหนดทุกเฟรมแบบ picking_sample.html ผู้ใช้จะแพน (คลิกขวา) ออกไปไม่ได้
+        const HOME_TARGET = controls.target.clone();
+        const FOCUS_LERP = 0.12;
+        let focusTarget = null;
+
+        function playScreenAction(clipName) {
+            if (!mixer || !screenActions[clipName]) return;
+            for (const key in screenActions) {
+                screenActions[key].stop();
+            }
+            const action = screenActions[clipName];
+            action.reset();
+            action.setLoop(THREE.LoopOnce, 1);
+            action.clampWhenFinished = true;
+            action.play();
+            console.log('Screen animation:', clipName);
+        }
+
+        // ล็อกการคลิกระหว่างจอกำลังกาง/ยุบ โดยอ่านจาก mixer สด ๆ
+        // ไม่พึ่ง event ภายใน เพื่อไม่ให้ล็อกค้างจนกดไม่ได้
+        function isScreenAnimating() {
+            if (!mixer) return false;
+            for (const key in screenActions) {
+                const action = screenActions[key];
+                // ACT_01/ACT_02 เป็นภาพนิ่งที่ค้างไว้ ไม่ต้องล็อก
+                // (ACT_01 เล่นค้างช่วงแรก 2.46 วินาทีหลังเปิดเว็บ ต้องให้คลิกได้เลย)
+                if (action === screenActions[SCREEN_CLIPS.closed] ||
+                    action === screenActions[SCREEN_CLIPS.open]) continue;
+                // isRunning() จะ false ทั้งตอนยังไม่เล่น ตอนถูก stop() และตอนเล่นจนแล้ว
+                // จึงไม่ต้องพึ่ง paused หรือ time ซึ่งถูก reset() ตั้งค่าใหม่ทุกครั้งที่ play/stop
+                if (action.isRunning()) return true;
+            }
+            return false;
+        }
+
+        function toggleScreen() {
+            if (!mixer || isScreenAnimating()) return;
+            const pivot = roomModel.getObjectByName('Screen_Control');
+            if (!pivot) return;
+            // scale.y = 1 คือเปิด, 0.02 คือปิด (Blender scale.z -> glTF scale.y)
+            const isOpen = pivot.scale.y > 0.5;
+            playScreenAction(isOpen ? SCREEN_CLIPS.closing : SCREEN_CLIPS.opening);
+            console.log('Screen toggled:', isOpen ? 'closing' : 'opening');
+        }
+
+        // ยิง raycast ครั้งเดียวรวมทุกชิ้น ตัวที่อยู่ใกล้สุดชนะ
+        // (ตอนจอเปิด ผิวจอทับกล่องอยู่ ต้องใช้ระยะจริงไม่ใช่ลำดับใน array)
+        // คืน null ถ้าไม่โดนอะไร ไม่งั้นคืน { group, object }
+        function pickAt(event) {
+            if (!mixer || pickTargets.length === 0) return null;
+            pointerNDC.x = (event.clientX / window.innerWidth) * 2 - 1;
+            pointerNDC.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(pointerNDC, camera);
+            const hits = raycaster.intersectObjects(pickTargets, false);
+            if (hits.length === 0) return null;
+            const object = hits[0].object;
+            return {
+                group: screenMeshes.indexOf(object) >= 0 ? 'screen' : 'housing',
+                object: object
+            };
+        }
+
+        // ต้องใช้ world position เพราะชิ้นกล่องซ้อนอยู่ใต้ Screen_Control
+        // ถ้าใช้ position (local) กล้องจะไปโฟกัสผิดตำแหน่ง
+        function focusOn(object) {
+            focusTarget = object.getWorldPosition(new THREE.Vector3());
+            console.log('Picked:', object.name, '-> world', focusTarget);
+        }
+
+        function focusHome() {
+            focusTarget = HOME_TARGET.clone();
+        }
+
         function loadScreenTexture(path, onLoad) {
             new THREE.TextureLoader().load(path, (texture) => {
                 texture.encoding = THREE.sRGBEncoding;
@@ -111,7 +228,7 @@
         // Load Room.glb model
         const loader = new THREE.GLTFLoader();
         loader.load('Model/Room.glb', (gltf) => {
-            const roomModel = gltf.scene;
+            roomModel = gltf.scene;
 
             // Auto-center & scale to fit the view
             const box = new THREE.Box3().setFromObject(roomModel);
@@ -122,12 +239,26 @@
             roomModel.scale.setScalar(scale);
             roomModel.position.sub(center.multiplyScalar(scale));
 
+            // แยกชิ้นจอ (ใต้ Screen_Control = กาง/ยุบได้) ออกจากชิ้นกล่อง (= ใช้โฟกัสกล้อง)
+            // แบ่งตาม hierarchy ไม่ hardcode ชื่อ
+            const pivot = roomModel.getObjectByName('Screen_Control');
             roomModel.traverse((child) => {
                 if (child.isMesh) {
                     child.castShadow = true;
                     child.receiveShadow = true;
                 }
+                if (!child.isMesh || child.name.indexOf('Screen_') !== 0) return;
+                let node = child;
+                while (node) {
+                    if (node === pivot) {
+                        screenMeshes.push(child);
+                        return;
+                    }
+                    node = node.parent;
+                }
+                housingMeshes.push(child);
             });
+            pickTargets = screenMeshes.concat(housingMeshes);
 
             screenMesh = roomModel.getObjectByName('Screen_Surface');
             if (screenMesh) {
@@ -137,6 +268,31 @@
                 console.error('Screen_Surface not found in Model/Room.glb');
             }
 
+            // Screen_Control is the Empty that rolls the whole screen in and out
+            mixer = new THREE.AnimationMixer(roomModel);
+            const clipByName = {};
+            gltf.animations.forEach((clip) => {
+                clipByName[clip.name] = clip;
+            });
+            for (const key in SCREEN_CLIPS) {
+                const name = SCREEN_CLIPS[key];
+                // exporter may append a slot suffix, so fall back to a prefix match
+                const clip = clipByName[name] ||
+                    gltf.animations.find((c) => c.name.indexOf(name) === 0);
+                if (clip) {
+                    screenActions[name] = mixer.clipAction(clip);
+                } else {
+                    console.error('Animation clip not found:', name);
+                }
+            }
+            console.log('Animation clips loaded:', Object.keys(screenActions).join(', '));
+            console.log('Pick targets: screen=' + screenMeshes.length +
+                ' housing=' + housingMeshes.length);
+
+            // default state on first load: screen closed (ACT_01)
+            playScreenAction(SCREEN_CLIPS.closed);
+            mixer.update(0); // apply the pose now so the first painted frame is already closed
+
             scene.add(roomModel);
             console.log('Model loaded: Model/Room.glb');
         }, undefined, (error) => {
@@ -144,10 +300,54 @@
         });
 
         function animate(t) {
+            if (mixer) mixer.update(clock.getDelta());
+
+            // เลื่อนจุดหมุนรอบเข้าหาเป้าหมาย แล้วหยุดเมื่อถึง
+            if (focusTarget) {
+                controls.target.lerp(focusTarget, FOCUS_LERP);
+                if (controls.target.distanceTo(focusTarget) < 0.002) {
+                    controls.target.copy(focusTarget);
+                    focusTarget = null;
+                }
+            }
+
+            controls.update(); // OrbitControls r128 อัปเดตกล้องใน event handler เท่านั้น
             renderer.render(scene, camera);
             requestAnimationFrame(animate);
         }
         animate(0);
+
+        // คลิกชุดโปรเจกเตอร์: คลิกผิวจอ = กาง/ยุบ, คลิกกล่อง = โฟกัสกล้อง, คลิกพื้นหลัง = กลับกลางฉาก
+        // ใช้ pointerdown/pointerup + ระยะการเคลื่อนที่ เพื่อแยก "คลิก" ออกจาก "ลากหมุนมุมมอง"
+        // ของ OrbitControls ซึ่งใช้ปุ่มซ้ายเหมือนกัน
+        renderer.domElement.addEventListener('pointermove', (event) => {
+            const hit = pickAt(event);
+            // กล่องโฟกัสได้เสมอ, ผิวจอกดได้ต่อเมื่อไม่กำลังกาง/ยุบ
+            const interactive = hit !== null &&
+                (hit.group === 'housing' || !isScreenAnimating());
+            document.body.style.cursor = interactive ? 'pointer' : 'default';
+        });
+
+        renderer.domElement.addEventListener('pointerdown', (event) => {
+            if (event.button !== 0) return;
+            pointerDownX = event.clientX;
+            pointerDownY = event.clientY;
+        });
+
+        renderer.domElement.addEventListener('pointerup', (event) => {
+            if (event.button !== 0) return;
+            const dragged = Math.hypot(event.clientX - pointerDownX, event.clientY - pointerDownY);
+            if (dragged > CLICK_MAX_DRAG) return; // เป็นการลากหมุนมุมมอง ไม่ใช่การคลิก
+
+            const hit = pickAt(event);
+            if (hit === null) {
+                focusHome();
+            } else if (hit.group === 'screen') {
+                toggleScreen();
+            } else {
+                focusOn(hit.object);
+            }
+        });
 
         window.addEventListener('keydown', (event) => {
             const key = event.key.toLowerCase();
