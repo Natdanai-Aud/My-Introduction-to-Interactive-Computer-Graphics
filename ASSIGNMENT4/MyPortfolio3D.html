@@ -2,20 +2,117 @@
 <html>
 
 <head>
-    <title>Interactive-3D-Portfolio</title>
+    <meta charset="utf-8">
+    <title>MyPortfolio3D</title>
     <style>
         body {
             margin: 0;
             overflow: hidden;
         }
+
+        /* ปุ่มเลือกภาษา มุมขวาบน ใช้สีชุดเดียวกับ #legend ของ Interactive-3D-Portfolio.html */
+        #lang {
+            position: fixed;
+            right: 12px;
+            top: 12px;
+            display: flex;
+            gap: 6px;
+            z-index: 1;
+        }
+
+        #lang button {
+            font: 12px/1 monospace;
+            color: #fff;
+            background: rgba(0, 0, 0, 0.55);
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            border-radius: 6px;
+            padding: 7px 12px;
+            cursor: pointer;
+        }
+
+        #lang button.on {
+            color: #222;
+            background: #ffd479;
+            border-color: #ffd479;
+        }
+
+        /* ป้ายข้อความลอยบน Screen_Housing
+           pointer-events: none บังคับ ไม่งั้นจะดักคลิกที่ OrbitControls */
+        .screen-label {
+            padding: 4px 9px;
+            font: 12px/1 monospace;
+            color: #fff;
+            background: rgba(0, 0, 0, 0.55);
+            border-radius: 6px;
+            white-space: nowrap;
+            pointer-events: none;
+            transform: translateY(-100%);
+        }
+
+        /* โหมดล็อกกล้องที่ผิวจอ: ปุ่มย้อนกลับ + คำใบ้ Esc
+           container เป็น pointer-events: none ให้แค่ปุ่มที่รับ click ได้
+           [hidden] ต้องมาด้วย เพราะ display:flex จะ override ค่า hidden ของ browser */
+        #focusUI {
+            position: fixed;
+            left: 12px;
+            top: 12px;
+            z-index: 1;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            pointer-events: none;
+        }
+
+        #focusUI[hidden] {
+            display: none;
+        }
+
+        #focusUI button {
+            pointer-events: auto;
+            font: 12px/1 monospace;
+            color: #fff;
+            background: rgba(0, 0, 0, 0.55);
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            border-radius: 6px;
+            padding: 7px 12px;
+            cursor: pointer;
+        }
+
+        #focusUI button:hover {
+            color: #222;
+            background: #ffd479;
+            border-color: #ffd479;
+        }
+
+        #focusHint {
+            font: 12px/1 monospace;
+            color: #fff;
+            background: rgba(0, 0, 0, 0.55);
+            border-radius: 6px;
+            padding: 7px 10px;
+        }
     </style>
 </head>
 
 <body>
+    <!-- เลือกภาษา: เปลี่ยนทั้งภาพบนจอและข้อความป้าย เริ่มต้นไทย -->
+    <div id="lang">
+        <button type="button" data-lang="th" class="on">ไทย</button>
+        <button type="button" data-lang="en">English</button>
+    </div>
+
+    <!-- โหมดล็อกกล้องที่ Screen_Surface: ออกได้ด้วยปุ่มย้อนกลับหรือ Esc -->
+    <div id="focusUI" hidden>
+        <button type="button" id="focusBack">ย้อนกลับ</button>
+        <span id="focusHint">กด Esc เพื่อออก</span>
+    </div>
+
     <!-- core three.js -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/renderers/CSS2DRenderer.js"></script>
 
     <script>
 
@@ -27,6 +124,15 @@
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
         renderer.toneMappingExposure = 1.2;
         document.body.appendChild(renderer.domElement);
+
+        // renderer ของป้ายข้อความ CSS2D แยกอีกชั้น ไม่เกี่ยวกับฉาก 3D
+        // pointer-events: none ที่ domElement เพื่อไม่ให้ป้ายไปดัก pointer ของ canvas
+        const labelRenderer = new THREE.CSS2DRenderer();
+        labelRenderer.setSize(window.innerWidth, window.innerHeight);
+        labelRenderer.domElement.style.position = 'absolute';
+        labelRenderer.domElement.style.top = '0';
+        labelRenderer.domElement.style.pointerEvents = 'none';
+        document.body.appendChild(labelRenderer.domElement);
 
         const scene = new THREE.Scene();
 
@@ -67,12 +173,438 @@
 
         scene.background = new THREE.Color(0xffffff);
 
+        // โมเดลทั้ง 6 ไฟล์ export จาก model.blend ไฟล์เดียวกัน จึงอยู่ใน world space ชุดเดียวกัน
+        // (ชื่อ node กับค่า translation ตรงกับ Model/Room.glb ทุกตัว) โหลดแล้วใส่ตำแหน่งเดิมได้เลย
+        // ต้องรวมเป็นกลุ่มเดียวก่อนหาขอบเขต ไม่งั้นแต่ละชิ้นจะถูกจัดวางใหม่แยกกันทีละกลุ่ม
+        const MODEL_FILES = [
+            'RoomModel.glb',
+            'Classroom_Board_StandardModel.glb',
+            'ProjectorScreenModel.glb',
+            'FanModel.glb',
+            'MusicStandSheetPlateModel.glb'
+        ];
+
+        const classroom = new THREE.Group();
+        scene.add(classroom);
+
+        const clock = new THREE.Clock();
+        let screenMixer = null;
+        let pending = MODEL_FILES.length;
+
+        // เลือกภาษา: เปลี่ยนทั้งภาพบนจอ (TH.png/EN.png) และข้อความป้าย เริ่มต้นไทย
+        const LANG = {
+            th: { btn: 'ไทย', open: 'เปิด', close: 'ปิด', texture: 'screen/TH.png', back: 'ย้อนกลับ', hint: 'กด Esc เพื่อออก' },
+            en: { btn: 'English', open: 'open', close: 'close', texture: 'screen/EN.png', back: 'Back', hint: 'Press Esc to exit' }
+        };
+        let lang = 'th';
+        const screenTextures = {};
+        let screenSurface = null; // ผิวจอ เอาไปวางภาพตามภาษา
+        let screenHousing = null; // กล่องบนจอ = ปุ่มเปิด/ปิดภาพฉาย
+        let screenLabel = null; // ป้ายข้อความ CSS2DObject ผูกไว้ใต้กล่อง
+
+        // Projector screen animation - 4 clips from model.blend
+        const SCREEN_CLIPS = {
+            closed: 'ACT_01_Screen_Closed',
+            open: 'ACT_02_Screen_Open',
+            opening: 'ACT_03_Screen_Opening',
+            closing: 'ACT_04_Screen_Closing'
+        };
+        const screenActions = {};
+
+        // สถานะจอแยกจาก clip เพื่อให้เงื่อนไขกดอ่านตรง ๆ ไม่ต้องเดา scale
+        // คลิกกล่องจอเพื่อสลับ: ปิด -> เปิด (ACT_03) / เปิด -> ปิด (ACT_04)
+        const SCREEN_STATE = { CLOSED: 'closed', OPEN: 'open', OPENING: 'opening', CLOSING: 'closing' };
+        const CLIP_TO_STATE = {};
+        CLIP_TO_STATE[SCREEN_CLIPS.closed] = SCREEN_STATE.CLOSED;
+        CLIP_TO_STATE[SCREEN_CLIPS.open] = SCREEN_STATE.OPEN;
+        CLIP_TO_STATE[SCREEN_CLIPS.opening] = SCREEN_STATE.OPENING;
+        CLIP_TO_STATE[SCREEN_CLIPS.closing] = SCREEN_STATE.CLOSING;
+        let screenState = SCREEN_STATE.CLOSED;
+
+        // raycast หา Screen_Housing
+        const raycaster = new THREE.Raycaster();
+        const pointerNDC = new THREE.Vector2();
+        let pointerX = 0, pointerY = 0;
+        let pointerInside = false;
+        const CLICK_MAX_DRAG = 5; // px ขยับน้อยกว่านี้ถือว่าเป็นการคลิก ไม่ใช่การลากหมุนมุมมอง
+        let pointerDownX = 0, pointerDownY = 0;
+
+        function playScreenAction(clipName) {
+            if (!screenMixer || !screenActions[clipName]) return;
+            for (const key in screenActions) {
+                screenActions[key].stop();
+            }
+            const action = screenActions[clipName];
+            action.reset();
+            action.setLoop(THREE.LoopOnce, 1);
+            action.clampWhenFinished = true;
+            action.play();
+            screenState = CLIP_TO_STATE[clipName];
+            console.log('Screen animation:', clipName, '-> state:', screenState);
+        }
+
+        // เปิดได้เฉพาะตอนปิดนิ่งเท่านั้น (ระหว่างยุบ/กางอยู่ให้กดอีกไม่ได้)
+        function canOpenScreen() {
+            return !!screenMixer && screenState === SCREEN_STATE.CLOSED;
+        }
+
+        // ปิดได้เฉพาะตอนเปิดนิ่งเท่านั้น
+        function canCloseScreen() {
+            return !!screenMixer && screenState === SCREEN_STATE.OPEN;
+        }
+
+        // คลิกกล่องจอเพื่อสลับ: ปิด -> เปิด, เปิด -> ปิด
+        // ระหว่างกำลังยุบ/กางอยู่ ทั้งสองเงื่อนไขเป็น false เท่านั้น จึงกดซ้ำไม่ได้
+        function toggleScreen() {
+            if (canOpenScreen()) {
+                playScreenAction(SCREEN_CLIPS.opening);
+            } else if (canCloseScreen()) {
+                playScreenAction(SCREEN_CLIPS.closing);
+            }
+        }
+
+        // เมื่อ clip ยุบ/กางเล่นจบ state ต้องกลับเป็นค่าคงที่ (ปิด/เปิด) ด้วย
+        // ไม่งั้น state จะค้างที่ closing/opening แล้วกดอะไรไม่ได้อีก
+        // เช็คด้วย isRunning() ซึ่ง false เมื่อเล่นจบแล้ว (LoopOnce + clampWhenFinished)
+        function settleScreenState() {
+            if (screenState === SCREEN_STATE.OPENING) {
+                const action = screenActions[SCREEN_CLIPS.opening];
+                if (action && !action.isRunning() && action.time > 0) {
+                    screenState = SCREEN_STATE.OPEN;
+                    console.log('Screen settled:', screenState);
+                }
+            } else if (screenState === SCREEN_STATE.CLOSING) {
+                const action = screenActions[SCREEN_CLIPS.closing];
+                if (action && !action.isRunning() && action.time > 0) {
+                    screenState = SCREEN_STATE.CLOSED;
+                    console.log('Screen settled:', screenState);
+                }
+            }
+        }
+
+        // ยิง raycast ที่ Screen_Housing
+        // (ตอนจอกาง ผิวจอทับกล่องอยู่ ถ้ายิงรวมทั้งชุดต้องใช้ระยะจริง)
+        function pickHousing() {
+            if (!screenHousing || !pointerInside) return false;
+            pointerNDC.x = (pointerX / window.innerWidth) * 2 - 1;
+            pointerNDC.y = -(pointerY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(pointerNDC, camera);
+            return raycaster.intersectObject(screenHousing, false).length > 0;
+        }
+
+        // ===== โหมดล็อกกล้องที่ผิวจอ =====
+        // คลิก Screen_Surface ตอนจอเปิดนิ่งแล้ว ให้กล้องลอยไปตั้งตรงหน้าจอและล็อกไว้
+        // ออกได้ทางเดียว: ปุ่มย้อนกลับ หรือ Esc
+        const FOCUS_MARGIN = 1.15; // เว้นขอบจอไว้เล็กน้อย ไม่ให้เต็มขอบจนขาด
+        const FOCUS_TWEEN_MS = 450; // ย้ายกล้องแบบลื่น ไม่ให้ภาพกระตุก
+        let focusMode = false;
+        let savedCameraPos = new THREE.Vector3();
+        let savedTarget = new THREE.Vector3();
+        const focusNormal = new THREE.Vector3();
+        const focusCenter = new THREE.Vector3();
+        const focusPos = new THREE.Vector3();
+        let focusAnim = null;
+
+        const focusUI = document.getElementById('focusUI');
+        const focusBack = document.getElementById('focusBack');
+        const focusHint = document.getElementById('focusHint');
+
+        // ยิง raycast ที่ Screen_Surface (ผิวจอ) คนละชุดกับกล่องจอ
+        function pickSurface() {
+            if (!screenSurface || !pointerInside) return false;
+            pointerNDC.x = (pointerX / window.innerWidth) * 2 - 1;
+            pointerNDC.y = -(pointerY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(pointerNDC, camera);
+            return raycaster.intersectObject(screenSurface, false).length > 0;
+        }
+
+        // เข้าโหมดโฟกัสได้เฉพาะจอเปิดนิ่งเท่านั้น
+        // ตอนปิด/กำลังยุบ/กำลังกาง ผิวจอย่อจนคลิกยากและความหมายก็ยังไม่ชัด จึงไม่เปิดโหมด
+        function canFocusScreen() {
+            return !!screenSurface && screenState === SCREEN_STATE.OPEN;
+        }
+
+        // คำนวณตำแหน่งกล้องที่หันหน้าเข้าหาจอพอดีโดยไม่ต้อง hardcode
+        // 1. หากล่องขอบเขตผิวจอใน world space -> จุดกลาง + ขนาด
+        // 2. หาแกนตัวเองที่บางที่สุดของกล่อง แปลงด้วย matrixWorld -> normal ของผิวจอ
+        //    (หันให้ชี้เข้าหากล้อง เพราะคลิกผิวจอได้แปลว่ากล้องอยู่ฝั่งที่มองเห็นหน้าจออยู่แล้ว)
+        // 3. ระยะถอยกล้องคำนวณจาก fov แนวตั้ง + aspect ให้จอเต็มเฟรมพร้อมขอบ
+        // คืน false เมื่อคำนวณไม่ได้ เช่น กล่องยุบเป็นศูนย์หรือเสีย ไม่ให้ผู้เรียกทำงานต่อ
+        function frameScreenCamera() {
+            if (!screenSurface) return false;
+            const box = new THREE.Box3().setFromObject(screenSurface);
+            if (box.isEmpty()) return false;
+            const size = box.getSize(new THREE.Vector3());
+            if (size.x <= 0 || size.y <= 0 || size.z <= 0) return false;
+            focusCenter.copy(box.getCenter(new THREE.Vector3()));
+
+            const minAxis = (size.x < size.y && size.x < size.z) ? 0 : (size.y < size.z ? 1 : 2);
+            focusNormal.set(0, 0, 0).setComponent(minAxis, 1);
+            screenSurface.updateWorldMatrix(true, false);
+            focusNormal.transformDirection(screenSurface.matrixWorld).normalize();
+            if (focusNormal.dot(camera.position.clone().sub(focusCenter)) < 0) focusNormal.negate();
+
+            const vFov = THREE.MathUtils.degToRad(camera.fov);
+            const distV = (size.y * 0.5 * FOCUS_MARGIN) / Math.tan(vFov * 0.5);
+            const hFov = 2 * Math.atan(Math.tan(vFov * 0.5) * camera.aspect);
+            const distH = (size.x * 0.5 * FOCUS_MARGIN) / Math.tan(hFov * 0.5);
+            focusPos.copy(focusCenter).addScaledVector(focusNormal, Math.max(distV, distH));
+            return true;
+        }
+
+        function enterScreenFocus() {
+            if (focusMode || !canFocusScreen()) return;
+            if (!frameScreenCamera()) return; // คำนวณมุมกล้องไม่ได้ ก็ไม่ล็อก
+            savedCameraPos.copy(camera.position);
+            savedTarget.copy(controls.target);
+            focusMode = true;
+            focusAnim = {
+                start: performance.now(),
+                fromPos: camera.position.clone(),
+                toPos: focusPos.clone(),
+                fromTarget: controls.target.clone(),
+                toTarget: focusCenter.clone()
+            };
+            controls.enabled = false;
+            focusUI.hidden = false;
+            setLabel(screenLabel, '', false);
+            console.log('Screen focus: locked');
+        }
+
+        function exitScreenFocus() {
+            if (!focusMode) return;
+            focusMode = false;
+            focusAnim = null;
+            camera.position.copy(savedCameraPos);
+            controls.target.copy(savedTarget);
+            controls.enabled = true;
+            focusUI.hidden = true;
+            console.log('Screen focus: released');
+        }
+
+        // easeInOutCubic ให้เริ่มช้า เร็วกลาง แล้วจบช้า
+        function easeInOutCubic(k) {
+            return k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+        }
+
+        function applyLanguage() {
+            const texture = screenTextures[lang];
+            if (!screenSurface || !texture) return;
+            screenSurface.material.map = texture;
+            screenSurface.material.emissiveMap = texture;
+            screenSurface.material.emissive = new THREE.Color(0xffffff);
+            screenSurface.material.emissiveIntensity = 0.4;
+            screenSurface.material.needsUpdate = true;
+            console.log('Screen language:', lang);
+        }
+
+        function loadScreenTexture(path, onLoad) {
+            new THREE.TextureLoader().load(path, (texture) => {
+                texture.encoding = THREE.sRGBEncoding;
+                texture.flipY = false; // GLB UVs already use glTF's top-left origin
+                texture.generateMipmaps = false; // 1920x1080 is not power-of-two
+                texture.minFilter = THREE.LinearFilter;
+                texture.wrapS = THREE.ClampToEdgeWrapping;
+                texture.wrapT = THREE.ClampToEdgeWrapping;
+                texture.needsUpdate = true;
+                onLoad(texture);
+            });
+        }
+
+        loadScreenTexture(LANG.th.texture, (t) => { screenTextures.th = t; applyLanguage(); });
+        loadScreenTexture(LANG.en.texture, (t) => { screenTextures.en = t; applyLanguage(); });
+
+        // จัดวางฉากให้อยู่กลางมุมมอง ต้องรอให้ครบทุกไฟล์ก่อน
+        function frameClassroom() {
+            const box = new THREE.Box3().setFromObject(classroom);
+            const center = box.getCenter(new THREE.Vector3());
+            const size = box.getSize(new THREE.Vector3());
+            const maxDim = Math.max(size.x, size.y, size.z);
+            const scale = 2.5 / maxDim;
+            classroom.scale.setScalar(scale);
+            classroom.position.sub(center.multiplyScalar(scale));
+        }
+
+        const loader = new THREE.GLTFLoader();
+        MODEL_FILES.forEach((file) => {
+            loader.load('Model/3D/' + file, (gltf) => {
+                classroom.add(gltf.scene);
+                gltf.scene.traverse((child) => {
+                    if (child.isMesh) {
+                        child.castShadow = true;
+                        child.receiveShadow = true;
+                    }
+                });
+
+                // ProjectorScreenModel.glb: ค่าเริ่มต้นเป็นจอปิด (ACT_01 เป็นภาพนิ่ง scale.y = 0.02)
+                // node ใน GLB ไม่มี scale ใน rest TRS ค่า default ของ three.js จึงเป็นจอกาง ต้องเล่น clip นี้ถึงจะปิดได้
+                if (file === 'ProjectorScreenModel.glb') {
+                    screenSurface = gltf.scene.getObjectByName('Screen_Surface');
+                    screenHousing = gltf.scene.getObjectByName('Screen_Housing');
+                    if (!screenSurface) console.error('Screen_Surface not found in ProjectorScreenModel.glb');
+                    if (!screenHousing) console.error('Screen_Housing not found in ProjectorScreenModel.glb');
+
+                    // Screen_Control คือ Empty ที่ยุบ/กางจอทั้งชุด
+                    screenMixer = new THREE.AnimationMixer(gltf.scene);
+                    for (const key in SCREEN_CLIPS) {
+                        const name = SCREEN_CLIPS[key];
+                        // exporter อาจเติม suffix ชื่อ slot ไว้ท้าย จึงใช้ prefix match
+                        const clip = gltf.animations.find((c) => c.name.indexOf(name) === 0);
+                        if (clip) {
+                            screenActions[name] = screenMixer.clipAction(clip);
+                        } else {
+                            console.error('Animation clip not found:', name);
+                        }
+                    }
+                    console.log('Screen clips:', gltf.animations.map((c) => c.name).join(', '));
+
+                    // default state on first load: screen closed (ACT_01) ยังไม่ฉายภาพ
+                    playScreenAction(SCREEN_CLIPS.closed);
+                    applyLanguage();
+
+                    // ป้ายข้อความผูกเป็น child ของกล่อง จะตามตำแหน่งอัตโนมัติ
+                    // ยกขึ้นข้างบน 0.45 หน่วย เพราะตัวกล่องสูงจริงแค่ ~0.12 หน่วย
+                    if (screenHousing) {
+                        const labelEl = document.createElement('div');
+                        labelEl.className = 'screen-label';
+                        screenLabel = new THREE.CSS2DObject(labelEl);
+                        screenLabel.position.set(0, 0.45, 0);
+                        screenLabel.visible = false;
+                        screenHousing.add(screenLabel);
+                    }
+                }
+
+                console.log('Model loaded: Model/3D/' + file);
+                if (--pending === 0) frameClassroom();
+            }, undefined, (error) => {
+                // โหลดไฟล์ใดไม่ได้ก็ยังจัดวางฉากที่เหลือ ไม่ค้างทั้งฉาก
+                console.error('Error loading Model/3D/' + file + ':', error);
+                if (--pending === 0) frameClassroom();
+            });
+        });
+
         function animate(t) {
-            controls.update(); // OrbitControls r128 อัปเดตกล้องใน event handler เท่านั้น
+            if (screenMixer) screenMixer.update(clock.getDelta());
+            settleScreenState();
+
+            // ยิง raycast ทีเดียวต่อเฟรม ไม่ใช่ทุก pointermove
+            // ตอนลากหมุนกล้อง object ขยับใต้เมาส์ที่หยุดนิ่ง วิธีนี้ hover จะตรงเสมอ
+            // ป้ายบอกว่าจะกดแล้วเกิดอะไร: ปิดอยู่ -> "เปิด" (ฉายภาพ) / เปิดอยู่ -> "ปิด" (หยุดฉาย)
+            // ระหว่างยุบ/กางอยู่กดไม่ได้ จึงไม่ขึ้นป้ายและไม่เปลี่ยน cursor
+            // ล็อกกล้องอยู่: ปิด interaction ทั้งหมด ไม่ขึ้นป้าย cursor ปกติ (ออกด้วย Back/Esc เท่านั้น)
+            if (focusMode) {
+                document.body.style.cursor = 'default';
+                setLabel(screenLabel, '', false);
+            } else {
+                const hovering = pickHousing();
+                const clickable = hovering && (canOpenScreen() || canCloseScreen());
+                // ผิวจออยู่หลังกล่องจอ ให้กล่องจอได้สิทธิ์ก่อนเสมอ
+                const onSurface = !clickable && canFocusScreen() && pickSurface();
+                document.body.style.cursor = clickable ? 'pointer' : (onSurface ? 'zoom-in' : 'default');
+                const actionText = canCloseScreen() ? LANG[lang].close : LANG[lang].open;
+                setLabel(screenLabel, actionText, clickable);
+            }
+
+            // ย้ายกล้องแบบลื่นไปหน้าจอ แล้วค่อยหยุดนิ่ง
+            // ต้องเลื่อน controls.target ไปพร้อมกันด้วย เพราะกล้องหันตาม target
+            // (ถ้าขยับแต่ตำแหน่ง กล้องจะยังหันไปทางเดิม ไม่ได้หันหน้าจอ)
+            if (focusAnim) {
+                const k = Math.min((t - focusAnim.start) / FOCUS_TWEEN_MS, 1);
+                const e = easeInOutCubic(k);
+                camera.position.lerpVectors(focusAnim.fromPos, focusAnim.toPos, e);
+                controls.target.lerpVectors(focusAnim.fromTarget, focusAnim.toTarget, e);
+                if (k >= 1) {
+                    camera.position.copy(focusAnim.toPos);
+                    controls.target.copy(focusAnim.toTarget);
+                    focusAnim = null;
+                }
+            }
+
+            // controls.update() ยังทำหน้าที่หันกล้องเข้าหา target แม้ enabled = false
+            // เพราะ r128 ใช้ enabled เช็คแค่ใน event handler ไม่ได้เช็คใน update
+            controls.update();
             renderer.render(scene, camera);
+            labelRenderer.render(scene, camera);
             requestAnimationFrame(animate);
         }
         animate(0);
+
+        // เขียนข้อความในป้ายเมื่อข้อความเปลี่ยนเท่านั้น ไม่งั้นจะแก้ DOM ทุกเฟรม
+        // ข้อความว่าง = ซ่อนป้าย
+        function setLabel(labelObj, text, visible) {
+            if (!labelObj) return;
+            labelObj.visible = visible;
+            const el = labelObj.element;
+            const want = visible ? text : '';
+            if (el.textContent !== want) el.textContent = want;
+        }
+
+        // คลิกกล่องจอเพื่อเปิด/ปิดภาพฉาย
+        // ใช้ pointerdown/pointerup + ระยะการเคลื่อนที่ เพื่อแยก "คลิก" ออกจาก "ลากหมุนมุมมอง"
+        // ของ OrbitControls ซึ่งใช้ปุ่มซ้ายเหมือนกัน
+        renderer.domElement.addEventListener('pointermove', (event) => {
+            pointerX = event.clientX;
+            pointerY = event.clientY;
+            pointerInside = true;
+        });
+
+        renderer.domElement.addEventListener('pointerleave', () => {
+            pointerInside = false;
+        });
+
+        renderer.domElement.addEventListener('pointerdown', (event) => {
+            if (event.button !== 0) return;
+            pointerDownX = event.clientX;
+            pointerDownY = event.clientY;
+        });
+
+        renderer.domElement.addEventListener('pointerup', (event) => {
+            if (event.button !== 0) return;
+            const dragged = Math.hypot(event.clientX - pointerDownX, event.clientY - pointerDownY);
+            if (dragged > CLICK_MAX_DRAG) return; // เป็นการลากหมุนมุมมอง ไม่ใช่การคลิก
+            if (focusMode) return; // ล็อกกล้องอยู่ คลิกฉากไม่ทำอะไร ออกด้วย Back/Esc เท่านั้น
+            pointerX = event.clientX;
+            pointerY = event.clientY;
+            pointerInside = true;
+            // กล่องจอมาก่อน เพราะผิวจอทับกล่องอยู่ตอนจอกาง
+            // คลิกกล่อง = สลับเปิด/ปิดฉาย / คลิกผิวจอตอนเปิดนิ่ง = ล็อกกล้องหน้าจอ
+            if (pickHousing()) {
+                toggleScreen();
+            } else if (canFocusScreen() && pickSurface()) {
+                enterScreenFocus();
+            }
+        });
+
+        // ปุ่มภาษา: เปลี่ยนภาพบนจอ + ข้อความป้ายพร้อมกัน
+        const langButtons = document.querySelectorAll('#lang button');
+        langButtons.forEach((btn) => {
+            btn.addEventListener('click', () => {
+                lang = btn.dataset.lang;
+                langButtons.forEach((b) => b.classList.toggle('on', b === btn));
+                focusBack.textContent = LANG[lang].back;
+                focusHint.textContent = LANG[lang].hint;
+                applyLanguage();
+            });
+        });
+
+        // ทางออกจากโหมดล็อกกล้อง: ปุ่มย้อนกลับ หรือปุ่ม Esc
+        focusBack.addEventListener('click', exitScreenFocus);
+        window.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape' || event.key === 'Esc') exitScreenFocus();
+        });
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            labelRenderer.setSize(window.innerWidth, window.innerHeight);
+            // ล็อดอยู่ต้องคำนวณระยะใหม่ตาม aspect ใหม่ ไม่งั้นจอจะล้นเฟรมหรือเล็กเกินไป
+            if (focusMode) {
+                frameScreenCamera();
+                camera.position.copy(focusPos);
+                controls.target.copy(focusCenter);
+            }
+        });
 
     </script>
 </body>
