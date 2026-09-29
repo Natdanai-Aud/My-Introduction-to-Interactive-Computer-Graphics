@@ -36,9 +36,9 @@
             border-color: #ffd479;
         }
 
-        /* ป้ายข้อความลอยบน Screen_Housing
+        /* ป้ายข้อความลอยบนวัตถุในฉาก (Screen_Housing / Stickman_Flat)
            pointer-events: none บังคับ ไม่งั้นจะดักคลิกที่ OrbitControls */
-        .screen-label {
+        .pin-label {
             padding: 4px 9px;
             font: 12px/1 monospace;
             color: #fff;
@@ -117,6 +117,7 @@
     <script>
 
         const renderer = new THREE.WebGLRenderer();
+        renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); // จอ HiDPI ต้อง render เต็มความละเอียด ไม่งั้นตัวหนังสือเบลอตอนซูม
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.shadowMap.enabled = true; // Shadow
         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -148,22 +149,25 @@
         const controls = new THREE.OrbitControls(camera, renderer.domElement);
 
   
-        const hemisphereLight = new THREE.HemisphereLight(0xffffff, 0x888888, 0.45);
+        // ไฟขาวทั้งชุดถอยให้ไฟเหลืองที่ตัวละครเด่นกว่า (ดูค่า STICK_SPOT_* ที่ล่าง)
+        // pointLight ตัวนี้สำคัญที่สุด มันอยู่ที่ (0,2,0) คือตรงเหนือหัวตัวละคร
+        // และไม่มี distance/decay แปลว่าไม่ตกผลเลย ความสว่างเต็มไปทั้งฉากตลอดเวลา
+        const hemisphereLight = new THREE.HemisphereLight(0xffffff, 0x888888, 0.2);
         scene.add(hemisphereLight);
 
-        const pointLight = new THREE.PointLight(0xffffff, 2);
+        const pointLight = new THREE.PointLight(0xffffff, 0.4);
         pointLight.position.set(0, 2, 0);
         pointLight.castShadow = true;
         scene.add(pointLight);
 
-        const fillLight = new THREE.PointLight(0xfff0dd, 1.5);
+        const fillLight = new THREE.PointLight(0xfff0dd, 0.4);
         fillLight.position.set(2, 1.5, 2);
         scene.add(fillLight);
         
 
         
 
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.6);
         directionalLight.position.set(10, 10, 10);
         directionalLight.castShadow = true;
         scene.add(directionalLight);
@@ -173,15 +177,19 @@
 
         scene.background = new THREE.Color(0xffffff);
 
-        // โมเดลทั้ง 6 ไฟล์ export จาก model.blend ไฟล์เดียวกัน จึงอยู่ใน world space ชุดเดียวกัน
+        // โมเดลทั้ง 7 ไฟล์ export จาก model.blend ไฟล์เดียวกัน จึงอยู่ใน world space ชุดเดียวกัน
         // (ชื่อ node กับค่า translation ตรงกับ Model/Room.glb ทุกตัว) โหลดแล้วใส่ตำแหน่งเดิมได้เลย
+        // Text.glb = ข้อความ 3 มิติ ติดอยู่บนผนังซ้ายหันหน้าเข้าห้อง อยู่ในกรอบเดียวกับห้อง
+        // จึงไม่เปลี่ยนการจัดวางฉาก ไม่ต้องวางตำแหน่งเพิ่ม (ไม่อยู่ในโซนที่บังจอ จึงไม่ต้องซ่อนตอนฟักส์)
         // ต้องรวมเป็นกลุ่มเดียวก่อนหาขอบเขต ไม่งั้นแต่ละชิ้นจะถูกจัดวางใหม่แยกกันทีละกลุ่ม
         const MODEL_FILES = [
             'RoomModel.glb',
             'Classroom_Board_StandardModel.glb',
             'ProjectorScreenModel.glb',
             'FanModel.glb',
-            'MusicStandSheetPlateModel.glb'
+            'MusicStandSheetPlateModel.glb',
+            'Stickman_Flat.glb',
+            'Text.glb'
         ];
 
         const classroom = new THREE.Group();
@@ -193,10 +201,15 @@
 
         // เลือกภาษา: เปลี่ยนทั้งภาพบนจอ (TH.png/EN.png) และข้อความป้าย เริ่มต้นไทย
         const LANG = {
-            th: { btn: 'ไทย', open: 'เปิด', close: 'ปิด', texture: 'screen/TH.png', back: 'ย้อนกลับ', hint: 'กด Esc เพื่อออก' },
-            en: { btn: 'English', open: 'open', close: 'close', texture: 'screen/EN.png', back: 'Back', hint: 'Press Esc to exit' }
+            th: { btn: 'ไทย', open: 'เปิด', close: 'ปิด', play: 'เล่น', pause: 'หยุด', texture: 'screen/TH.png', back: 'ย้อนกลับ', hint: 'กด Esc เพื่อออก' },
+            en: { btn: 'English', open: 'open', close: 'close', play: 'play', pause: 'pause', texture: 'screen/EN.png', back: 'Back', hint: 'Press Esc to exit' }
         };
         let lang = 'th';
+
+        // ความสว่างภาพบนจอ: ผิวจอเป็น emissive ล้วน (ไม่รับแสงในฉาก)
+        // มากกว่านี้ = สว่างขึ้น (1.1-1.4) / น้อยกว่านี้ = มืดลง (0.6-0.8)
+        const SCREEN_EMISSIVE = 0.9;
+
         const screenTextures = {};
         let screenSurface = null; // ผิวจอ เอาไปวางภาพตามภาษา
         let screenHousing = null; // กล่องบนจอ = ปุ่มเปิด/ปิดภาพฉาย
@@ -220,6 +233,30 @@
         CLIP_TO_STATE[SCREEN_CLIPS.opening] = SCREEN_STATE.OPENING;
         CLIP_TO_STATE[SCREEN_CLIPS.closing] = SCREEN_STATE.CLOSING;
         let screenState = SCREEN_STATE.CLOSED;
+
+        // ตัวละครนักนำวางไม้ (Stickman_Flat.glb) - rigged 15 ข้อต่อ มี clip เดียว
+        // ไม่เล่นอัตโนมัติ ต้องคลิกที่ตัวละครถึงจะเล่น (คลิกซ้ำ = หยุดชั่วคราว)
+        const STICKMAN_CLIP = 'ACT_05_Stickman_Conduct_120f';
+        // Mat_Stick_Black ในไฟล์เป็นสีดำเกือบสนิท (baseColor 0.012) เห็นเป็นเงาดำล้วน อ่อนให้เห็นเป็นทรง 3 มิติ
+        const STICKMAN_BODY_COLOR = 0x4d4d4d;
+
+        // แสงเหลืองไฮไลต์ตัวละคร คุมค่าไว้ที่นี่ ปรับง่ายกว่าไล่หาในโค้ด
+        // distance กับ decay ต้อง > 0 ทั้งคู่ เพราะ r128 ปิด physicallyCorrectLights ไว้
+        // ถ้าค่าไหนเป็น 0 ไฟจะกลายเป็นไม่ตกผล ความสว่างจะท่วมทั้งฉาก
+        const STICK_SPOT_COLOR = 0xffd479; // เหลืองวรรณอนเดียวกับปุ่มภาษาใน #lang
+        const STICK_SPOT_INTENSITY = 4;
+        const STICK_SPOT_ANGLE = 0.55; // rad (~32°) ครอมครึ่งความกว้างตัวละคร 0.3 หน่วย
+        const STICK_SPOT_PENUMBRA = 0.6; // ขอบวงมัว ไม่เป็นวงแข็ง
+        const STICK_SPOT_DISTANCE = 4; // หน่วยโลก
+        const STICK_SPOT_DECAY = 2;
+        const STICK_SPOT_HEIGHT = 0.15; // สูงกว่ายอดตัวละคร (หน่วยโลก)
+        const STICK_SPOT_FRONT = 0.7; // ด้านหน้าตัวละคร (+Z คือหน้าที่ตัวละครหันไป)
+        let stickmanRoot = null;
+        let stickmanMixer = null;
+        let stickmanAction = null;
+        let stickmanPlaying = false;
+        let stickLabel = null; // ป้ายข้อความ CSS2DObject ลอยเหนือหัวตัวละคร บอกว่าจะกดแล้วเล่น/หยุด
+        let stickSpot = null; // SpotLight สีเหลือง เปิดตอนชี้ตัวละครหรือกำลังเล่น animation
 
         // raycast หา Screen_Housing
         const raycaster = new THREE.Raycaster();
@@ -263,6 +300,32 @@
             }
         }
 
+        // คลิกตัวละคร = เล่น/หยุดชั่วคราว ใช้ raycast หา object แล้วสั่ง action แบบ picking_sample.html
+        // เริ่มจาก reset() เสมอ เพื่อให้กดซ้ำแล้วเล่นใหม่ตั้งแต่เฟรมแรก
+        function toggleStickman() {
+            if (!stickmanAction) return;
+            if (stickmanPlaying) {
+                stickmanPlaying = false;
+                console.log('Stickman: paused at', stickmanAction.time.toFixed(2));
+                return;
+            }
+            stickmanAction.reset();
+            stickmanAction.play();
+            stickmanPlaying = true;
+            console.log('Stickman animation:', STICKMAN_CLIP);
+        }
+
+        // raycast หาตัวละครทั้งกลุ่ม (gltf.scene เป็น Group ต้อง intersect แบบ recursive)
+        // ข้อจำกัดของ r128: raycast บน SkinnedMesh ใช้ทรง bind pose ไม่ตามท่าที่กำลังเล่น
+        // จึงคลิกลำตัว/หัว/ขาได้เสมอ แต่ช่วงที่แขนกำลังกวาดอาจคลิกไม่โดน
+        function pickStickman() {
+            if (!stickmanRoot || !pointerInside || focusMode) return false;
+            pointerNDC.x = (pointerX / window.innerWidth) * 2 - 1;
+            pointerNDC.y = -(pointerY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(pointerNDC, camera);
+            return raycaster.intersectObject(stickmanRoot, true).length > 0;
+        }
+
         // เมื่อ clip ยุบ/กางเล่นจบ state ต้องกลับเป็นค่าคงที่ (ปิด/เปิด) ด้วย
         // ไม่งั้น state จะค้างที่ closing/opening แล้วกดอะไรไม่ได้อีก
         // เช็คด้วย isRunning() ซึ่ง false เมื่อเล่นจบแล้ว (LoopOnce + clampWhenFinished)
@@ -304,6 +367,10 @@
         const focusCenter = new THREE.Vector3();
         const focusPos = new THREE.Vector3();
         let focusAnim = null;
+
+        // วัตถุที่ยืนระหว่างกล้องกับจอ (แท่นเพลงกับตัวละคร) จะบังภาพตอนกล้องล็อกหน้าจอ
+        // จึงซ่อนชั่วคราวเฉพาะตอนอยู่ในโหมดนี้ ตอนหมุนมุมมองปกติยังเห็นครบ
+        const focusHidden = [];
 
         const focusUI = document.getElementById('focusUI');
         const focusBack = document.getElementById('focusBack');
@@ -352,12 +419,18 @@
             return true;
         }
 
+        // ซ่อน/คืนวัตถุที่บังจอ เรียกตอนเข้าและออกจากโหมดล็อกกล้อง
+        function setFocusHidden(hidden) {
+            for (const obj of focusHidden) obj.visible = !hidden;
+        }
+
         function enterScreenFocus() {
             if (focusMode || !canFocusScreen()) return;
             if (!frameScreenCamera()) return; // คำนวณมุมกล้องไม่ได้ ก็ไม่ล็อก
             savedCameraPos.copy(camera.position);
             savedTarget.copy(controls.target);
             focusMode = true;
+            setFocusHidden(true); // แท่นเพลงกับตัวละครอยู่ระหว่างกล้องกับจอ ต้องซ่อนไม่ให้บังจอ
             focusAnim = {
                 start: performance.now(),
                 fromPos: camera.position.clone(),
@@ -374,6 +447,7 @@
         function exitScreenFocus() {
             if (!focusMode) return;
             focusMode = false;
+            setFocusHidden(false); // คืนแท่นเพลงกับตัวละครกลับเข้าฉาก
             focusAnim = null;
             camera.position.copy(savedCameraPos);
             controls.target.copy(savedTarget);
@@ -393,7 +467,7 @@
             screenSurface.material.map = texture;
             screenSurface.material.emissiveMap = texture;
             screenSurface.material.emissive = new THREE.Color(0xffffff);
-            screenSurface.material.emissiveIntensity = 0.4;
+            screenSurface.material.emissiveIntensity = SCREEN_EMISSIVE;
             screenSurface.material.needsUpdate = true;
             console.log('Screen language:', lang);
         }
@@ -404,6 +478,7 @@
                 texture.flipY = false; // GLB UVs already use glTF's top-left origin
                 texture.generateMipmaps = false; // 1920x1080 is not power-of-two
                 texture.minFilter = THREE.LinearFilter;
+                texture.anisotropy = renderer.capabilities.getMaxAnisotropy(); // ให้คมตอนมองมุมเฉ
                 texture.wrapS = THREE.ClampToEdgeWrapping;
                 texture.wrapT = THREE.ClampToEdgeWrapping;
                 texture.needsUpdate = true;
@@ -423,6 +498,43 @@
             const scale = 2.5 / maxDim;
             classroom.scale.setScalar(scale);
             classroom.position.sub(center.multiplyScalar(scale));
+            // ต้องวางไฟหลัง scale/position ของฉากเสร็จ ไฟถึงจะได้ตำแหน่งโลกที่ถูกต้อง
+            placeStickSpot();
+        }
+
+        // วางไฟเหลืองให้เล็งตัวละคร โดยวัดจากกล่องขอบเขตจริงแทนการ hardcode
+        // เพราะ frameClassroom() สเกลฉากทั้งก้อน ตำแหน่งโลกของตัวละครจึงเปลี่ยนตามโมเดลที่โหลดมา
+        // ไฟต้องอยู่ใน scene graph และ target ต้องอยู่ใน scene ด้วย ไม่งั้นทิศทางลำแสงจะไม่อัปเดต
+        // เริ่มต้นซ่อนไว้ แสงจะขึ้นตอนชี้ตัวละครหรือกำลังเล่น animation เท่านั้น
+        function placeStickSpot() {
+            if (!stickmanRoot) return;
+            // ต้องอัปเดต matrixWorld ของกลุ่มก่อนเสมอ
+            // updateMatrixWorld ของตัวละครอ่านค่าจาก parent แล้วเอาไปคูณต่อ แต่ไม่ไล่ขึ้นไปอัปเดตให้
+            // ถ้ากลุ่มเพิ่งถูก frameClassroom() สเกลใหม่ ค่าที่วัดได้จะเป็นของก่อนสเกล
+            // (ไฟจะยิงไกลเกินจริงจน falloff หมด ไม่เหลือสีเหลืองให้เห็น)
+            classroom.updateMatrixWorld(true);
+            stickmanRoot.updateMatrixWorld(true);
+            const box = new THREE.Box3().setFromObject(stickmanRoot);
+            if (box.isEmpty()) return;
+            const center = box.getCenter(new THREE.Vector3());
+            if (!stickSpot) {
+                stickSpot = new THREE.SpotLight(
+                    STICK_SPOT_COLOR,
+                    STICK_SPOT_INTENSITY,
+                    STICK_SPOT_DISTANCE,
+                    STICK_SPOT_ANGLE,
+                    STICK_SPOT_PENUMBRA,
+                    STICK_SPOT_DECAY
+                );
+                stickSpot.castShadow = false;
+                stickSpot.visible = false;
+                scene.add(stickSpot);
+                scene.add(stickSpot.target);
+            }
+            stickSpot.position.set(center.x, box.max.y + STICK_SPOT_HEIGHT, center.z + STICK_SPOT_FRONT);
+            stickSpot.target.position.copy(center);
+            console.log('Stickman spot:', stickSpot.position.toArray().map((v) => +v.toFixed(3)),
+                '-> target', center.toArray().map((v) => +v.toFixed(3)));
         }
 
         const loader = new THREE.GLTFLoader();
@@ -436,6 +548,9 @@
                     }
                 });
 
+                // แท่นเพลงยืนอยู่ระหว่างกล้องกับจอ พอกล้องล็อกหน้าจอจะบังภาพ จึงต้องซ่อนตอนฟักส์
+                if (file === 'MusicStandSheetPlateModel.glb') focusHidden.push(gltf.scene);
+
                 // ProjectorScreenModel.glb: ค่าเริ่มต้นเป็นจอปิด (ACT_01 เป็นภาพนิ่ง scale.y = 0.02)
                 // node ใน GLB ไม่มี scale ใน rest TRS ค่า default ของ three.js จึงเป็นจอกาง ต้องเล่น clip นี้ถึงจะปิดได้
                 if (file === 'ProjectorScreenModel.glb') {
@@ -443,6 +558,19 @@
                     screenHousing = gltf.scene.getObjectByName('Screen_Housing');
                     if (!screenSurface) console.error('Screen_Surface not found in ProjectorScreenModel.glb');
                     if (!screenHousing) console.error('Screen_Housing not found in ProjectorScreenModel.glb');
+
+                    if (screenSurface) {
+                        // ผิวจอเป็นภาพฉาย ไม่ต้องรับแสงในฉาก:
+                        // ปิด diffuse (color = 0) กัน hotspot ขาวโพลนจาก pointLight กลางห้อง
+                        // (ฉากถูก frameClassroom() สเกลเหลือ ~2.5 หน่วย ไฟจึงอยู่ใกล้จอมาก)
+                        // ปิด specular (roughness = 1, metalness = 0) กันเงาแวะเวลาหมุนมุมหน้าจอ
+                        // ความสว่างที่เหลือคุมด้วย SCREEN_EMISSIVE ที่ applyLanguage() ที่เดียว
+                        const screenMat = screenSurface.material;
+                        screenMat.color.set(0x000000);
+                        screenMat.roughness = 1;
+                        screenMat.metalness = 0;
+                        screenMat.needsUpdate = true;
+                    }
 
                     // Screen_Control คือ Empty ที่ยุบ/กางจอทั้งชุด
                     screenMixer = new THREE.AnimationMixer(gltf.scene);
@@ -458,19 +586,65 @@
                     }
                     console.log('Screen clips:', gltf.animations.map((c) => c.name).join(', '));
 
-                    // default state on first load: screen closed (ACT_01) ยังไม่ฉายภาพ
-                    playScreenAction(SCREEN_CLIPS.closed);
+                    // default state on first load: screen open (ACT_02)
+                    playScreenAction(SCREEN_CLIPS.open);
                     applyLanguage();
 
                     // ป้ายข้อความผูกเป็น child ของกล่อง จะตามตำแหน่งอัตโนมัติ
                     // ยกขึ้นข้างบน 0.45 หน่วย เพราะตัวกล่องสูงจริงแค่ ~0.12 หน่วย
                     if (screenHousing) {
                         const labelEl = document.createElement('div');
-                        labelEl.className = 'screen-label';
+                        labelEl.className = 'pin-label';
                         screenLabel = new THREE.CSS2DObject(labelEl);
                         screenLabel.position.set(0, 0.45, 0);
                         screenLabel.visible = false;
                         screenHousing.add(screenLabel);
+                    }
+                }
+
+                // Stickman_Flat.glb: ตัวละครนักนำวางไม้ ยืนหน้าแท่นเพลง
+                // เท้าอยู่ที่ y=0 อยู่แล้วในไฟล์ จึงวางแค่ z
+                // หน้าตัวละครชี้ +Z อยู่แล้ว เพราะเท้ายื่นไป -Z แล้ว root หมุน 180 รอบ Y มาแล้ว
+                if (file === 'Stickman_Flat.glb') {
+                    gltf.scene.position.set(0, 0, -1.2);
+                    stickmanRoot = gltf.scene;
+                    focusHidden.push(gltf.scene); // ตัวละครสูงกว่าจอและยืนอยู่ระหว่างกล้องกับจอ จึงต้องซ่อนตอนฟักส์
+
+                    stickmanMixer = new THREE.AnimationMixer(gltf.scene);
+                    // exporter อาจเติม suffix ชื่อ slot ไว้ท้าย จึงใช้ prefix match
+                    const stickClip = gltf.animations.find((c) => c.name.indexOf(STICKMAN_CLIP) === 0);
+                    if (stickClip) {
+                        stickmanAction = stickmanMixer.clipAction(stickClip);
+                        stickmanAction.setLoop(THREE.LoopRepeat, Infinity);
+                    } else {
+                        console.error('Animation clip not found:', STICKMAN_CLIP);
+                    }
+                    console.log('Stickman clips:', gltf.animations.map((c) => c.name).join(', '));
+
+                    let tinted = 0;
+                    gltf.scene.traverse((child) => {
+                        if (child.isMesh && child.material && child.material.name === 'Mat_Stick_Black') {
+                            child.material.color.setHex(STICKMAN_BODY_COLOR);
+                            tinted++;
+                        }
+                    });
+                    if (!tinted) console.error('Mat_Stick_Black not found in Stickman_Flat.glb');
+
+                    // ป้ายข้อความผูกไว้เหนือหัวตัวละคร จะตามตำแหน่งอัตโนมัติ
+                    // หาขอบเขตใน local space ก่อน เพราะฉากถูก frameClassroom() สเกลทีหลัง
+                    // ถ้าวัดเป็น world space ตอนนี้ป้ายจะเพี้ยนตำแหน่งไปตอนสเกล
+                    gltf.scene.updateMatrixWorld(true);
+                    const toLocal = new THREE.Matrix4().copy(gltf.scene.matrixWorld).invert();
+                    const stickBox = new THREE.Box3().setFromObject(gltf.scene).applyMatrix4(toLocal);
+                    if (!stickBox.isEmpty()) {
+                        const labelEl = document.createElement('div');
+                        labelEl.className = 'pin-label';
+                        stickLabel = new THREE.CSS2DObject(labelEl);
+                        const stickCenter = stickBox.getCenter(new THREE.Vector3());
+                        // ยกขึ้นจากยอดตัวละคร 0.3 หน่วย (translateY(-100%) ของ .pin-label ยกป้ายให้อยู่เหนือจุดนี้)
+                        stickLabel.position.set(stickCenter.x, stickBox.max.y + 0.3, stickCenter.z);
+                        stickLabel.visible = false;
+                        gltf.scene.add(stickLabel);
                     }
                 }
 
@@ -484,7 +658,11 @@
         });
 
         function animate(t) {
-            if (screenMixer) screenMixer.update(clock.getDelta());
+            // ดึง delta ครั้งเดียวแล้วใช้ทั้งจอกับตัวละคร
+            // ถ้าเรียก clock.getDelta() แยกทีละตัว ครั้งที่สองจะได้ ~0 แล้วตัวละครจะนิ่ง
+            const dt = clock.getDelta();
+            if (screenMixer) screenMixer.update(dt);
+            if (stickmanMixer && stickmanPlaying) stickmanMixer.update(dt);
             settleScreenState();
 
             // ยิง raycast ทีเดียวต่อเฟรม ไม่ใช่ทุก pointermove
@@ -495,14 +673,26 @@
             if (focusMode) {
                 document.body.style.cursor = 'default';
                 setLabel(screenLabel, '', false);
+                // ตัวละครถูกซ่อนตอนฟักส์ ป้ายของมันต้องหายตาม ไม่งั้นจะลอยกลางจอโดยไม่มีที่มา
+                setLabel(stickLabel, '', false);
+                // ไฟเหลืองต้องปิดตามตัวละครเหมือนกัน ไม่งั้นจะเหลือวงแสงบนพื้นที่ไม่มีตัวละคร
+                if (stickSpot) stickSpot.visible = false;
             } else {
                 const hovering = pickHousing();
                 const clickable = hovering && (canOpenScreen() || canCloseScreen());
                 // ผิวจออยู่หลังกล่องจอ ให้กล่องจอได้สิทธิ์ก่อนเสมอ
                 const onSurface = !clickable && canFocusScreen() && pickSurface();
-                document.body.style.cursor = clickable ? 'pointer' : (onSurface ? 'zoom-in' : 'default');
+                // ตัวละครอยู่ไกลจอมากจึงไม่ชนกับการคลิกจอ เช็คต่อท้ายสุดได้เลย
+                // ยิงครั้งเดียวแล้วใช้ทั้ง cursor, ป้าย และไฟ ไม่ยิงซ้ำหลายรอบต่อเฟรม
+                const onStickman = !clickable && !onSurface && pickStickman();
+                document.body.style.cursor = clickable ? 'pointer' : (onSurface ? 'zoom-in' : (onStickman ? 'pointer' : 'default'));
                 const actionText = canCloseScreen() ? LANG[lang].close : LANG[lang].open;
                 setLabel(screenLabel, actionText, clickable);
+                // ป้ายตัวละครบอกว่าจะกดแล้วเกิดอะไร: หยุดอยู่ -> "เล่น" (การนักนำ) / เล่นอยู่ -> "หยุด"
+                setLabel(stickLabel, stickmanPlaying ? LANG[lang].pause : LANG[lang].play, onStickman);
+                // ไฟเหลืองขึ้นตอนชี้ตัวละคร และค้างต่อระหว่างที่ animation กำลังเล่น
+                // (เอาเมาส์ออกแล้วไฟดับทันทีถ้าไม่ได้กดเล่นไว้)
+                if (stickSpot) stickSpot.visible = onStickman || stickmanPlaying;
             }
 
             // ย้ายกล้องแบบลื่นไปหน้าจอ แล้วค่อยหยุดนิ่ง
@@ -568,10 +758,13 @@
             pointerInside = true;
             // กล่องจอมาก่อน เพราะผิวจอทับกล่องอยู่ตอนจอกาง
             // คลิกกล่อง = สลับเปิด/ปิดฉาย / คลิกผิวจอตอนเปิดนิ่ง = ล็อกกล้องหน้าจอ
+            // คลิกตัวละคร = เล่น/หยุด animation การนักนำ
             if (pickHousing()) {
                 toggleScreen();
             } else if (canFocusScreen() && pickSurface()) {
                 enterScreenFocus();
+            } else if (pickStickman()) {
+                toggleStickman();
             }
         });
 
